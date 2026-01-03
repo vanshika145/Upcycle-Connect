@@ -32,6 +32,8 @@ const register = async (req, res) => {
     });
 
     await user.save();
+    
+    console.log(`✅ User registered in MongoDB: ${user.email} (${user.role})`);
 
     res.status(201).json({
       message: 'User registered successfully',
@@ -48,6 +50,17 @@ const register = async (req, res) => {
     });
   } catch (error) {
     console.error('Register error:', error);
+    
+    // Handle MongoDB duplicate key error
+    if (error.code === 11000) {
+      return res.status(400).json({ message: 'User with this email already exists' });
+    }
+    
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({ message: error.message });
+    }
+    
     res.status(500).json({ message: 'Server error' });
   }
 };
@@ -66,6 +79,8 @@ const login = async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
+
+    console.log(`✅ User logged in from MongoDB: ${user.email} (${user.role})`);
 
     res.json({
       message: 'Login successful',
@@ -114,6 +129,9 @@ const googleSignIn = async (req, res) => {
         },
       });
       await user.save();
+      console.log(`✅ Google user created in MongoDB: ${user.email} (${user.role})`);
+    } else {
+      console.log(`✅ Google user logged in from MongoDB: ${user.email} (${user.role})`);
     }
 
     res.json({
@@ -131,6 +149,17 @@ const googleSignIn = async (req, res) => {
     });
   } catch (error) {
     console.error('Google sign-in error:', error);
+    
+    // Handle MongoDB duplicate key error
+    if (error.code === 11000) {
+      return res.status(400).json({ message: 'User with this email already exists' });
+    }
+    
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({ message: error.message });
+    }
+    
     res.status(500).json({ message: 'Server error' });
   }
 };

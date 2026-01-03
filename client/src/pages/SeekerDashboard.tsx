@@ -3,12 +3,13 @@ import { motion, AnimatePresence } from "framer-motion";
 import { 
   Recycle, Search, Package, Map, ClipboardList, BarChart3, Settings, 
   LogOut, Bell, Filter, MapPin, Heart, ArrowRight, Check, Clock,
-  ChevronRight, Sliders, Star
+  ChevronRight, Sliders, Star, Loader2
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AnimatedCounter } from "@/components/AnimatedCounter";
+import { useAuth } from "@/contexts/AuthContext";
 
 const navItems = [
   { icon: Search, label: "Browse", id: "browse" },
@@ -70,9 +71,28 @@ const mockRequests = [
 ];
 
 const SeekerDashboard = () => {
+  const { user, logout, loading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState("browse");
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // Get user's initial from name
+  const getUserInitial = () => {
+    if (!user?.name) return "U";
+    return user.name.charAt(0).toUpperCase();
+  };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return null;
+  }
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -116,17 +136,24 @@ const SeekerDashboard = () => {
         <div className="p-4 border-t border-border">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl gradient-accent flex items-center justify-center text-white font-bold">
-              A
+              {getUserInitial()}
             </div>
             {sidebarOpen && (
               <div className="flex-1">
-                <p className="font-medium text-sm">Alex Chen</p>
-                <p className="text-xs text-muted-foreground">Innovator</p>
+                <p className="font-medium text-sm">{user.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {user.role === "seeker" ? user.college || "Seeker" : user.organization || "Provider"}
+                </p>
               </div>
             )}
           </div>
           {sidebarOpen && (
-            <Button variant="ghost" size="sm" className="w-full mt-3 text-muted-foreground">
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="w-full mt-3 text-muted-foreground"
+              onClick={logout}
+            >
               <LogOut className="w-4 h-4 mr-2" />
               Log out
             </Button>

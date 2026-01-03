@@ -1,6 +1,9 @@
 // API configuration
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
+// Import Firebase auth to get fresh tokens
+import { auth } from '@/config/firebase';
+
 export interface User {
   id: string;
   name: string;
@@ -44,6 +47,23 @@ const getAuthToken = (): string | null => {
   return localStorage.getItem('firebase_id_token');
 };
 
+// Get fresh Firebase ID token
+const getFreshToken = async (): Promise<string | null> => {
+  try {
+    const currentUser = auth.currentUser;
+    if (currentUser) {
+      // Get fresh token (Firebase automatically refreshes if needed)
+      const token = await currentUser.getIdToken(true); // Force refresh
+      setAuthToken(token);
+      return token;
+    }
+    return null;
+  } catch (error) {
+    console.error('Error getting fresh token:', error);
+    return null;
+  }
+};
+
 // Set auth token in localStorage
 export const setAuthToken = (token: string): void => {
   localStorage.setItem('firebase_id_token', token);
@@ -57,9 +77,19 @@ export const removeAuthToken = (): void => {
 // API request helper
 const apiRequest = async <T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  requireAuth: boolean = true
 ): Promise<T> => {
-  const token = getAuthToken();
+  // Get fresh token if auth is required
+  let token: string | null = null;
+  if (requireAuth) {
+    token = await getFreshToken();
+    if (!token) {
+      throw new Error('Authentication required. Please log in again.');
+    }
+  } else {
+    token = getAuthToken();
+  }
   
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
@@ -116,7 +146,134 @@ export const authAPI = {
   getMe: async (): Promise<{ user: User }> => {
     return apiRequest<{ user: User }>('/api/auth/me', {
       method: 'GET',
+    }, true);
+  },
+};
+
+// Material interfaces
+export interface MaterialImage {
+  url: string;
+  publicId: string;
+}
+
+export interface Material {
+  id: string;
+  title: string;
+  category: string;
+  description: string;
+  quantity: string;
+  images: MaterialImage[];
+  providerId: string;
+  provider?: {
+    name: string;
+    email: string;
+    organization?: string;
+  };
+  location: {
+    type: 'Point';
+    coordinates: [number, number]; // [longitude, latitude]
+  };
+  status: 'available' | 'requested' | 'picked';
+  createdAt: string;
+}
+
+export interface CreateMaterialData {
+  title: string;
+  category: string;
+  description?: string;
+  quantity: string;
+  images?: File[]; // Changed to File[] for upload
+  latitude: number;
+  longitude: number;
+}
+
+// Material API functions
+export const materialAPI = {
+  // Create a new material with file uploads
+  create: async (data: CreateMaterialData): Promise<{ message: string; material: Material }> => {
+    const token = await getFreshToken();
+    if (!token) {
+      throw new Error('Authentication required. Please log in again.');
+    }
+
+    // Create FormData for multipart/form-data
+    const formData = new FormData();
+    formData.append('title', data.title);
+    formData.append('category', data.category);
+    if (data.description) {
+      formData.append('description', data.description);
+    }
+    formData.append('quantity', data.quantity);
+    formData.append('latitude', data.latitude.toString());
+    formData.append('longitude', data.longitude.toString());
+
+    // Append image files
+    if (data.images && data.images.length > 0) {
+      data.images.forEach((file) => {
+        formData.append('images', file);
+      });
+    }
+
+    // Make request with FormData (don't set Content-Type, browser will set it with boundary)
+    const response = await fetch(`${API_BASE_URL}/api/materials`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        // Don't set Content-Type - browser will set it automatically with boundary for FormData
+      },
+      body: formData,
     });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'An error occurred' }));
+      throw new Error(error.message || `HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  },
+
+  // Get my materials (for providers)
+  getMyMaterials: async (): Promise<{ materials: Material[] }> => {
+    return apiRequest<{ materials: Material[] }>('/api/materials/my-materials', {
+      method: 'GET',
+    }, true);
+  },
+
+  // Get available materials (for seekers to browse)
+  getAvailable: async (category?: string, latitude?: number, longitude?: number): Promise<{ materials: Material[] }> => {
+    const params = new URLSearchParams();
+    if (category && category !== 'All') params.append('category', category);
+    if (latitude) params.append('latitude', latitude.toString());
+    if (longitude) params.append('longitude', longitude.toString());
+    
+    const queryString = params.toString();
+    const url = `/api/materials/available${queryString ? `?${queryString}` : ''}`;
+    
+    return apiRequest<{ materials: Material[] }>(url, {
+      method: 'GET',
+    }, false); // Public endpoint, no auth required
+  },
+
+  // Get material by ID
+  getById: async (id: string): Promise<{ material: Material }> => {
+    return apiRequest<{ material: Material }>(`/api/materials/${id}`, {
+      method: 'GET',
+    }, false); // Public endpoint, no auth required
+  },
+
+  // Update material status
+  updateStatus: async (id: string, status: 'available' | 'requested' | 'picked'): Promise<{ message: string; material: { id: string; status: string } }> => {
+    return apiRequest<{ message: string; material: { id: string; status: string } }>(`/api/materials/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }, true);
+  },
+
+  // Delete material
+  delete: async (id: string): Promise<{ message: string }> => {
+    return apiRequest<{ message: string }>(`/api/materials/${id}`, {
+      method: 'DELETE',
+    }, true);
   },
 };
 
