@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
-  Recycle, Search, Package, Map, ClipboardList, BarChart3, Settings, 
-  LogOut, Bell, Filter, MapPin, Heart, ArrowRight, Check, Clock,
+  Recycle, Search, Package, Map, ClipboardList, BarChart3, 
+  LogOut, Filter, MapPin, Heart, ArrowRight, Check, Clock,
   ChevronRight, Sliders, Star, Loader2, CreditCard
 } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -11,10 +11,36 @@ import { Input } from "@/components/ui/input";
 import { AnimatedCounter } from "@/components/AnimatedCounter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSocket } from "@/contexts/SocketContext";
-import { materialAPI, Material, requestAPI, impactAPI } from "@/lib/api";
+import { materialAPI, Material, requestAPI, impactAPI, analyticsAPI } from "@/lib/api";
 import { toast } from "sonner";
 import { RequestModal } from "@/components/RequestModal";
 import { PaymentModal } from "@/components/PaymentModal";
+import NotificationBell from "@/components/NotificationBell";
+import { AISearchBar } from "@/components/AISearchBar";
+import { ReviewModal } from "@/components/ReviewModal";
+import { MaterialMap } from "@/components/MaterialMap";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  ArcElement,
+  Title,
+  Tooltip,
+  Legend,
+} from 'chart.js';
+import { Bar, Doughnut } from 'react-chartjs-2';
+
+// Register Chart.js components
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  ArcElement,
+  Title,
+  Tooltip,
+  Legend
+);
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
@@ -23,7 +49,6 @@ const navItems = [
   { icon: Map, label: "Map View", id: "map" },
   { icon: ClipboardList, label: "My Requests", id: "requests" },
   { icon: BarChart3, label: "My Impact", id: "impact" },
-  { icon: Settings, label: "Settings", id: "settings" },
 ];
 
 const categories = ["All", "Chemicals", "Glassware", "Electronics", "Metals", "Plastics", "Bio Materials", "Other"];
@@ -44,6 +69,13 @@ const SeekerDashboard = () => {
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [impactData, setImpactData] = useState<any>(null);
   const [impactLoading, setImpactLoading] = useState(false);
+  const [categoryBreakdown, setCategoryBreakdown] = useState<any[]>([]);
+  const [co2Monthly, setCo2Monthly] = useState<any[]>([]);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [showTrustedOnly, setShowTrustedOnly] = useState(false);
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  const [selectedExchangeForReview, setSelectedExchangeForReview] = useState<any | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Get user's initial from name
   const getUserInitial = () => {
@@ -154,6 +186,27 @@ const SeekerDashboard = () => {
     }
   }, []);
 
+  // Fetch analytics data for charts
+  const fetchAnalyticsData = useCallback(async () => {
+    setAnalyticsLoading(true);
+    try {
+      // Fetch category breakdown
+      const categoryData = await analyticsAPI.getCategoryBreakdown();
+      setCategoryBreakdown(categoryData);
+      
+      // Fetch CO₂ monthly data
+      const co2Data = await analyticsAPI.getCO2Monthly();
+      setCo2Monthly(co2Data);
+      
+      console.log('✅ Fetched analytics data:', { categoryData, co2Data });
+    } catch (error: any) {
+      console.error("Error fetching analytics data:", error);
+      toast.error(error.message || "Failed to fetch analytics data");
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  }, []);
+
   // Fetch materials when location is available or category changes
   useEffect(() => {
     if (activeTab === "browse") {
@@ -176,8 +229,9 @@ const SeekerDashboard = () => {
       fetchRequests();
     } else if (activeTab === "impact" && user) {
       fetchImpactData();
+      fetchAnalyticsData();
     }
-  }, [activeTab, user, fetchRequests, fetchImpactData]);
+  }, [activeTab, user, fetchRequests, fetchImpactData, fetchAnalyticsData]);
 
   // Listen for real-time request status updates via Socket.IO
   useEffect(() => {
@@ -193,6 +247,11 @@ const SeekerDashboard = () => {
       if (activeTab === "browse" && userLocation) {
         fetchMaterials();
       }
+      // Refresh impact and analytics data when request is approved (material reused)
+      if (activeTab === "impact") {
+        fetchImpactData();
+        fetchAnalyticsData();
+      }
     };
 
     const handleRequestRejected = () => {
@@ -207,14 +266,26 @@ const SeekerDashboard = () => {
       }
     };
 
+    // Listen for material reuse events (when order is received)
+    const handleMaterialReused = () => {
+      console.log('♻️ Material reused notification received');
+      // Refresh impact and analytics data
+      if (activeTab === "impact") {
+        fetchImpactData();
+        fetchAnalyticsData();
+      }
+    };
+
     socket.on('requestApproved', handleRequestApproved);
     socket.on('requestRejected', handleRequestRejected);
+    socket.on('materialReused', handleMaterialReused);
 
     return () => {
       socket.off('requestApproved', handleRequestApproved);
       socket.off('requestRejected', handleRequestRejected);
+      socket.off('materialReused', handleMaterialReused);
     };
-  }, [socket, activeTab, fetchRequests, fetchMaterials, userLocation]);
+  }, [socket, activeTab, fetchRequests, fetchMaterials, userLocation, fetchImpactData, fetchAnalyticsData]);
 
   const handleRequestClick = (material: Material) => {
     setSelectedMaterial(material);
@@ -274,6 +345,12 @@ const SeekerDashboard = () => {
   const handleReceiveOrder = async (requestId: string) => {
     try {
       await requestAPI.receiveOrder(requestId);
+      // Find the request to show review modal
+      const request = requests.find((r) => r.id === requestId);
+      if (request) {
+        setSelectedExchangeForReview(request);
+        setReviewModalOpen(true);
+      }
       toast.success("Order marked as received!");
       fetchRequests();
     } catch (error: any) {
@@ -388,15 +465,8 @@ const SeekerDashboard = () => {
               {navItems.find((item) => item.id === activeTab)?.label || "Dashboard"}
             </h1>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input placeholder="Search materials..." className="pl-9 w-64 h-10" />
-            </div>
-            <Button variant="ghost" size="icon" className="relative">
-              <Bell className="w-5 h-5" />
-              <span className="absolute top-1 right-1 w-2 h-2 bg-primary rounded-full" />
-            </Button>
+          <div className="flex items-center gap-4 relative z-[100]">
+            <NotificationBell userId={user?.id} />
           </div>
         </header>
 
@@ -410,8 +480,30 @@ const SeekerDashboard = () => {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
               >
+                {/* Search Bar */}
+                <div className="mb-6">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+                    <Input
+                      placeholder="Search materials by name, category, or description..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-10 h-12 text-base"
+                    />
+                  </div>
+                </div>
+
+                {/* AI Search Bar */}
+                <AISearchBar
+                  userLocation={userLocation}
+                  onMaterialClick={(material) => {
+                    setSelectedMaterial(material);
+                    setIsRequestModalOpen(true);
+                  }}
+                />
+
                 {/* Filters */}
-                <div className="flex flex-wrap items-center gap-4 mb-6">
+                <div className="flex flex-wrap items-center gap-4 mb-6 mt-6">
                   <div className="flex gap-2 flex-wrap">
                     {categories.map((cat) => (
                       <button
@@ -431,6 +523,17 @@ const SeekerDashboard = () => {
                     ))}
                   </div>
                   <div className="flex items-center gap-2 ml-auto">
+                    <button
+                      onClick={() => setShowTrustedOnly(!showTrustedOnly)}
+                      className={`px-4 py-2 rounded-full text-sm font-medium transition-colors flex items-center gap-2 ${
+                        showTrustedOnly
+                          ? "gradient-primary text-white"
+                          : "bg-muted text-muted-foreground hover:bg-muted/80"
+                      }`}
+                    >
+                      <Star className="w-4 h-4" />
+                      Highly Rated (4+)
+                    </button>
                     <Button variant="outline" size="sm">
                       <Sliders className="w-4 h-4 mr-2" />
                       Filters
@@ -459,7 +562,26 @@ const SeekerDashboard = () => {
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {materials.map((material, index) => {
+                    {materials
+                      .filter((material) => {
+                        // Filter by search query
+                        if (searchQuery.trim()) {
+                          const query = searchQuery.toLowerCase();
+                          const matchesTitle = material.title?.toLowerCase().includes(query);
+                          const matchesCategory = material.category?.toLowerCase().includes(query);
+                          const matchesDescription = material.description?.toLowerCase().includes(query);
+                          if (!matchesTitle && !matchesCategory && !matchesDescription) {
+                            return false;
+                          }
+                        }
+                        // Filter by trusted providers if enabled
+                        if (showTrustedOnly) {
+                          const rating = material.provider?.averageRating || 0;
+                          return rating >= 4;
+                        }
+                        return true;
+                      })
+                      .map((material, index) => {
                       // Use distance from API if available (from getNearby), otherwise calculate
                       const [materialLng, materialLat] = material.location?.coordinates || [0, 0];
                       const distance = material.distance !== undefined
@@ -479,6 +601,7 @@ const SeekerDashboard = () => {
                       return (
                         <motion.div
                           key={material.id}
+                          id={`material-${material.id}`}
                           initial={{ opacity: 0, y: 20 }}
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ delay: index * 0.1 }}
@@ -530,15 +653,40 @@ const SeekerDashboard = () => {
                             <div className="flex items-center justify-between mb-3">
                               <div className="flex items-center gap-2">
                                 <span className="text-sm text-muted-foreground">Price:</span>
-                                <span className="font-semibold text-primary">
-                                  ₹{material.price.toFixed(2)}
-                                </span>
-                                <span className="text-xs text-muted-foreground">
-                                  {material.priceUnit === 'per_unit' ? '/unit' :
-                                   material.priceUnit === 'per_kg' ? '/kg' :
-                                   material.priceUnit === 'per_box' ? '/box' :
-                                   material.priceUnit === 'per_set' ? '/set' : ''}
-                                </span>
+                                {(() => {
+                                  // Get price from API response (directly from DB)
+                                  const materialPrice = material.price ?? 0;
+                                  const priceUnit = material.priceUnit || 'total';
+                                  
+                                  // Ensure price is a valid number
+                                  const validPrice = typeof materialPrice === 'number' && !isNaN(materialPrice) && materialPrice >= 0 
+                                    ? materialPrice 
+                                    : 0;
+                                  
+                                  if (validPrice === 0) {
+                                    return (
+                                      <span className="px-2 py-0.5 rounded-full bg-eco-green/10 text-eco-green text-xs font-medium">
+                                        Free / Donation
+                                      </span>
+                                    );
+                                  }
+                                  
+                                  return (
+                                    <>
+                                      <span className="font-semibold text-primary">
+                                        ₹{validPrice.toFixed(2)}
+                                      </span>
+                                      {priceUnit !== 'total' && (
+                                        <span className="text-xs text-muted-foreground">
+                                          /{priceUnit === 'per_unit' ? 'unit' :
+                                           priceUnit === 'per_kg' ? 'kg' :
+                                           priceUnit === 'per_box' ? 'box' :
+                                           priceUnit === 'per_set' ? 'set' : ''}
+                                        </span>
+                                      )}
+                                    </>
+                                  );
+                                })()}
                               </div>
                               <span className="text-xs text-muted-foreground">
                                 Qty: {material.quantity}
@@ -582,6 +730,38 @@ const SeekerDashboard = () => {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
+                className="h-[calc(100vh-8rem)] rounded-3xl overflow-hidden"
+              >
+                <MaterialMap
+                  userLocation={userLocation}
+                  onMaterialClick={(material) => {
+                    // Switch to browse tab and scroll to material
+                    setActiveTab("browse");
+                    setSelectedCategory("All");
+                    // Scroll to material after a brief delay to allow tab switch
+                    setTimeout(() => {
+                      const materialElement = document.getElementById(`material-${material.id}`);
+                      if (materialElement) {
+                        materialElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        // Highlight the material
+                        materialElement.classList.add('ring-2', 'ring-primary', 'ring-offset-2');
+                        setTimeout(() => {
+                          materialElement.classList.remove('ring-2', 'ring-primary', 'ring-offset-2');
+                        }, 3000);
+                      }
+                    }, 300);
+                  }}
+                />
+              </motion.div>
+            )}
+
+            {/* Old map view code removed - keeping for reference */}
+            {false && (
+              <motion.div
+                key="map-old"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
                 className="h-[calc(100vh-8rem)] rounded-3xl overflow-hidden border border-border"
               >
                 <div className="relative w-full h-full bg-muted/50">
@@ -597,33 +777,6 @@ const SeekerDashboard = () => {
                     }}
                   />
                   
-                  {/* Pins */}
-                  {[
-                    { x: "30%", y: "40%", label: "Lab Beakers" },
-                    { x: "50%", y: "35%", label: "Copper Wire" },
-                    { x: "65%", y: "55%", label: "PCB Boards" },
-                    { x: "40%", y: "60%", label: "Solvents" },
-                  ].map((pin, i) => (
-                    <motion.div
-                      key={i}
-                      initial={{ scale: 0 }}
-                      animate={{ scale: 1 }}
-                      transition={{ delay: i * 0.1 }}
-                      className="absolute group cursor-pointer"
-                      style={{ left: pin.x, top: pin.y }}
-                    >
-                      <div className="absolute -inset-3 rounded-full bg-primary/20 map-pin-pulse" />
-                      <div className="w-10 h-10 -ml-5 -mt-5 rounded-full gradient-primary shadow-glow flex items-center justify-center">
-                        <Package className="w-5 h-5 text-white" />
-                      </div>
-                      <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                        <div className="glass-card rounded-lg px-3 py-1.5 whitespace-nowrap shadow-lg">
-                          <p className="text-sm font-medium">{pin.label}</p>
-                        </div>
-                      </div>
-                    </motion.div>
-                  ))}
-
                   {/* User Location */}
                   <motion.div
                     initial={{ scale: 0 }}
@@ -879,74 +1032,166 @@ const SeekerDashboard = () => {
                   </>
                 )}
 
-                {/* Charts */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* Bar Chart */}
-                  <div className="glass-card rounded-2xl p-6">
-                    <h3 className="font-semibold mb-4">Waste Reused by Category</h3>
-                    <div className="space-y-4">
-                      {[
-                        { label: "Electronics", value: 45 },
-                        { label: "Metals", value: 30 },
-                        { label: "Glassware", value: 15 },
-                        { label: "Chemicals", value: 10 },
-                      ].map((item) => (
-                        <div key={item.label}>
-                          <div className="flex justify-between text-sm mb-1">
-                            <span>{item.label}</span>
-                            <span className="text-muted-foreground">{item.value}%</span>
-                          </div>
-                          <div className="h-2 bg-muted rounded-full overflow-hidden">
-                            <motion.div
-                              initial={{ width: 0 }}
-                              animate={{ width: `${item.value}%` }}
-                              transition={{ duration: 1, delay: 0.2 }}
-                              className="h-full gradient-primary rounded-full"
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                {/* Charts - Dynamic from MongoDB */}
+                {analyticsLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-8 h-8 animate-spin text-primary" />
                   </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Waste Reused by Category - Progress Bars */}
+                    {categoryBreakdown.length > 0 ? (
+                      <div className="glass-card rounded-2xl p-6">
+                        <h3 className="font-semibold mb-4">Waste Reused by Category</h3>
+                        <div className="space-y-4">
+                          {(() => {
+                            // Calculate total for percentage calculation
+                            const total = categoryBreakdown.reduce((sum, cat) => sum + cat.total, 0);
+                            return categoryBreakdown.map((cat) => {
+                              const percentage = total > 0 ? (cat.total / total) * 100 : 0;
+                              return (
+                                <div key={cat.category}>
+                                  <div className="flex justify-between text-sm mb-1">
+                                    <span>{cat.category}</span>
+                                    <span className="text-muted-foreground">
+                                      {cat.total.toFixed(1)} kg ({percentage.toFixed(1)}%)
+                                    </span>
+                                  </div>
+                                  <div className="h-2 bg-muted rounded-full overflow-hidden">
+                                    <motion.div
+                                      initial={{ width: 0 }}
+                                      animate={{ width: `${percentage}%` }}
+                                      transition={{ duration: 1, delay: 0.2 }}
+                                      className="h-full gradient-primary rounded-full"
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            });
+                          })()}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="glass-card rounded-2xl p-6 flex items-center justify-center min-h-[200px]">
+                        <p className="text-muted-foreground">No category data available</p>
+                      </div>
+                    )}
 
-                  {/* Pie Chart Visualization */}
-                  <div className="glass-card rounded-2xl p-6">
-                    <h3 className="font-semibold mb-4">Category Distribution</h3>
-                    <div className="flex items-center justify-center">
-                      <div className="relative w-48 h-48">
-                        <svg viewBox="0 0 100 100" className="w-full h-full transform -rotate-90">
-                          {[
-                            { percent: 45, color: "hsl(var(--eco-green))", offset: 0 },
-                            { percent: 30, color: "hsl(var(--eco-teal))", offset: 45 },
-                            { percent: 15, color: "hsl(var(--eco-blue))", offset: 75 },
-                            { percent: 10, color: "hsl(var(--accent))", offset: 90 },
-                          ].map((slice, i) => (
-                            <motion.circle
-                              key={i}
-                              cx="50"
-                              cy="50"
-                              r="40"
-                              fill="none"
-                              stroke={slice.color}
-                              strokeWidth="20"
-                              strokeDasharray={`${slice.percent * 2.51} 251`}
-                              strokeDashoffset={`${-slice.offset * 2.51}`}
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              transition={{ delay: i * 0.2 }}
+                    {/* Category Distribution - Doughnut Chart */}
+                    {categoryBreakdown.length > 0 ? (
+                      <div className="glass-card rounded-2xl p-6">
+                        <h3 className="font-semibold mb-4">Category Distribution</h3>
+                        <div className="flex items-center justify-center">
+                          <div className="w-full max-w-md">
+                            <Doughnut
+                              data={{
+                                labels: categoryBreakdown.map((cat) => cat.category),
+                                datasets: [
+                                  {
+                                    label: 'Waste Reused (kg)',
+                                    data: categoryBreakdown.map((cat) => cat.total),
+                                    backgroundColor: [
+                                      'hsl(var(--eco-green))',
+                                      'hsl(var(--eco-teal))',
+                                      'hsl(var(--eco-blue))',
+                                      'hsl(var(--accent))',
+                                      'hsl(var(--primary))',
+                                      'hsl(var(--secondary))',
+                                      'hsl(var(--muted))',
+                                    ],
+                                    borderWidth: 0,
+                                  },
+                                ],
+                              }}
+                              options={{
+                                responsive: true,
+                                maintainAspectRatio: true,
+                                plugins: {
+                                  legend: {
+                                    position: 'bottom',
+                                    labels: {
+                                      padding: 15,
+                                      usePointStyle: true,
+                                    },
+                                  },
+                                  tooltip: {
+                                    callbacks: {
+                                      label: (context) => {
+                                        const label = context.label || '';
+                                        const value = context.parsed || 0;
+                                        const total = categoryBreakdown.reduce((sum, cat) => sum + cat.total, 0);
+                                        const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                                        return `${label}: ${value.toFixed(1)} kg (${percentage}%)`;
+                                      },
+                                    },
+                                  },
+                                },
+                              }}
                             />
-                          ))}
-                        </svg>
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <div className="text-center">
-                            <p className="font-display font-bold text-2xl">23</p>
-                            <p className="text-xs text-muted-foreground">Total Items</p>
                           </div>
                         </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="glass-card rounded-2xl p-6 flex items-center justify-center min-h-[200px]">
+                        <p className="text-muted-foreground">No distribution data available</p>
+                      </div>
+                    )}
+
+                    {/* CO₂ Reduction Over Time - Bar Chart */}
+                    {co2Monthly.length > 0 ? (
+                      <div className="glass-card rounded-2xl p-6 md:col-span-2">
+                        <h3 className="font-semibold mb-4">CO₂ Reduction Over Time</h3>
+                        <div className="h-64">
+                          <Bar
+                            data={{
+                              labels: co2Monthly.map((item) => {
+                                // Convert month number to month name
+                                const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                                return `${monthNames[item.month - 1]} ${item.year}`;
+                              }),
+                              datasets: [
+                                {
+                                  label: 'CO₂ Saved (kg)',
+                                  data: co2Monthly.map((item) => item.co2),
+                                  backgroundColor: 'hsl(var(--eco-teal))',
+                                  borderRadius: 8,
+                                },
+                              ],
+                            }}
+                            options={{
+                              responsive: true,
+                              maintainAspectRatio: false,
+                              plugins: {
+                                legend: {
+                                  display: false,
+                                },
+                                tooltip: {
+                                  callbacks: {
+                                    label: (context) => {
+                                      return `CO₂ Saved: ${context.parsed.y.toFixed(2)} kg`;
+                                    },
+                                  },
+                                },
+                              },
+                              scales: {
+                                y: {
+                                  beginAtZero: true,
+                                  ticks: {
+                                    callback: (value) => `${value} kg`,
+                                  },
+                                },
+                              },
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="glass-card rounded-2xl p-6 flex items-center justify-center min-h-[200px] md:col-span-2">
+                        <p className="text-muted-foreground">No CO₂ data available</p>
+                      </div>
+                    )}
                   </div>
-                </div>
+                )}
               </motion.div>
             )}
           </AnimatePresence>
@@ -983,6 +1228,23 @@ const SeekerDashboard = () => {
         }}
         onPaymentComplete={handlePaymentComplete}
       />
+
+      {/* Review Modal */}
+      {reviewModalOpen && selectedExchangeForReview && (
+        <ReviewModal
+          isOpen={reviewModalOpen}
+          onClose={() => {
+            setReviewModalOpen(false);
+            setSelectedExchangeForReview(null);
+          }}
+          exchangeId={selectedExchangeForReview.id}
+          providerName={selectedExchangeForReview.provider?.name || selectedExchangeForReview.provider?.organization || "Provider"}
+          materialTitle={selectedExchangeForReview.material?.title || "Material"}
+          onReviewSubmitted={() => {
+            fetchRequests();
+          }}
+        />
+      )}
     </div>
   );
 };

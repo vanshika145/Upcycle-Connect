@@ -1,6 +1,7 @@
 const { getRazorpayInstance } = require('../config/razorpay');
 const Request = require('../models/Request');
 const User = require('../models/User');
+const { createNotification } = require('./notificationController');
 
 /**
  * Create a Razorpay order for payment
@@ -218,13 +219,29 @@ const verifyPayment = async (req, res) => {
 
     console.log(`✅ Payment verified: ${razorpay_payment_id} for request ${request._id}`);
 
+    // Create notification for provider
+    const providerId = request.providerId._id;
+    const notificationMessage = `Payment received (₹${paymentAmount.toFixed(2)}) for "${request.materialId.title}" from ${seeker.name}`;
+    
+    const notification = await createNotification(
+      providerId,
+      'PAYMENT',
+      notificationMessage,
+      {
+        requestId: request._id,
+        materialId: request.materialId._id,
+        paymentId: razorpay_payment_id,
+      }
+    );
+
     // Emit Socket.IO event to provider
     try {
       const socketIO = req.app.get('socketIO');
       if (socketIO && socketIO.emitToUser) {
-        const providerId = request.providerId._id.toString();
+        const providerIdStr = providerId.toString();
         
-        socketIO.emitToUser(providerId, 'paymentReceived', {
+        // Emit paymentReceived event (existing)
+        socketIO.emitToUser(providerIdStr, 'paymentReceived', {
           request: {
             id: request._id.toString(),
             material: {
@@ -237,8 +254,24 @@ const verifyPayment = async (req, res) => {
             },
             paymentId: request.paymentId,
           },
-          message: `Payment received for "${request.materialId.title}" from ${seeker.name}`,
+          message: notificationMessage,
         });
+
+        // Emit newNotification event with notification data
+        if (notification) {
+          socketIO.emitToUser(providerIdStr, 'newNotification', {
+            id: notification._id.toString(),
+            type: notification.type,
+            message: notification.message,
+            read: notification.read,
+            createdAt: notification.createdAt,
+            metadata: {
+              requestId: request._id.toString(),
+              materialId: request.materialId._id.toString(),
+              paymentId: razorpay_payment_id,
+            },
+          });
+        }
       }
     } catch (socketError) {
       console.error('⚠️ Failed to notify provider via Socket.IO:', socketError);

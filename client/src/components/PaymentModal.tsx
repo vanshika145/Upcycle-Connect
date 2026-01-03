@@ -205,11 +205,16 @@ export const PaymentModal = ({ request, isOpen, onClose, onPaymentComplete }: Pa
                       const quantityMatch = quantityStr.match(/(\d+(?:\.\d+)?)/);
                       const requestedQty = quantityMatch ? parseFloat(quantityMatch[1]) : 1;
                       
+                      // Ensure materialPrice is a valid number
+                      const validPrice = typeof materialPrice === 'number' && !isNaN(materialPrice) && materialPrice >= 0 
+                        ? materialPrice 
+                        : 0;
+                      
                       let total = 0;
                       if (priceUnit === 'total') {
-                        total = materialPrice;
+                        total = validPrice;
                       } else {
-                        total = materialPrice * requestedQty;
+                        total = validPrice * requestedQty;
                       }
                       
                       // Ensure total is a valid number
@@ -219,11 +224,11 @@ export const PaymentModal = ({ request, isOpen, onClose, onPaymentComplete }: Pa
                       
                       return (
                         <>
-                          {materialPrice > 0 && (
+                          {validPrice > 0 && (
                             <div className="flex justify-between text-sm mb-2">
                               <span className="text-muted-foreground">Unit Price:</span>
                               <span className="font-medium">
-                                ₹{materialPrice.toFixed(2)}
+                                ₹{validPrice.toFixed(2)}
                                 {priceUnit !== 'total' && (
                                   <span className="text-xs text-muted-foreground ml-1">
                                     /{priceUnit === 'per_unit' ? 'unit' :

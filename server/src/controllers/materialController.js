@@ -2,6 +2,43 @@ const Material = require('../models/Material');
 const User = require('../models/User');
 const { uploadMultipleImages, deleteMultipleImages } = require('../config/cloudinary');
 
+/**
+ * Compliance-Safe Material Listing
+ * Restricted materials list - prevents unsafe/restricted materials from being listed
+ * This list should be maintained and updated based on safety regulations
+ */
+const RESTRICTED_MATERIALS = [
+  'mercury',
+  'radioactive waste',
+  'explosive chemicals',
+  'biological hazard',
+  'cyanide',
+  'asbestos',
+  'radioactive',
+  'explosive',
+  'hazardous waste',
+  'toxic waste',
+];
+
+/**
+ * Check if material name contains restricted keywords
+ * @param {string} materialName - Material title/name to check
+ * @returns {boolean} - True if material is restricted
+ */
+const isRestrictedMaterial = (materialName) => {
+  if (!materialName || typeof materialName !== 'string') {
+    return false;
+  }
+
+  // Normalize input: lowercase and trim
+  const normalizedName = materialName.toLowerCase().trim();
+
+  // Check if any restricted keyword is found in the material name
+  return RESTRICTED_MATERIALS.some((restricted) =>
+    normalizedName.includes(restricted.toLowerCase())
+  );
+};
+
 // Create a new material
 const createMaterial = async (req, res) => {
   let uploadedImagePublicIds = []; // Track uploaded images for cleanup on error
@@ -13,6 +50,24 @@ const createMaterial = async (req, res) => {
     // Validate required fields
     if (!title || !category || !quantity || !latitude || !longitude) {
       return res.status(400).json({ message: 'Missing required fields' });
+    }
+
+    // Compliance check: Validate material name against restricted materials list
+    if (isRestrictedMaterial(title)) {
+      console.error(`🚫 Compliance violation: Attempted to list restricted material: "${title}"`);
+      return res.status(403).json({
+        error: 'This material violates safety and compliance guidelines.',
+        message: 'The material you are trying to list is restricted due to safety regulations. Please contact support if you believe this is an error.',
+      });
+    }
+
+    // Also check description for restricted keywords (optional but recommended)
+    if (description && isRestrictedMaterial(description)) {
+      console.error(`🚫 Compliance violation: Restricted keyword found in description: "${description}"`);
+      return res.status(403).json({
+        error: 'This material violates safety and compliance guidelines.',
+        message: 'The material description contains restricted keywords. Please contact support if you believe this is an error.',
+      });
     }
 
     // Validate price
@@ -140,6 +195,8 @@ const createMaterial = async (req, res) => {
           name: material.providerId.name,
           email: material.providerId.email,
           organization: material.providerId.organization,
+          averageRating: material.providerId.averageRating || 0,
+          totalReviews: material.providerId.totalReviews || 0,
         },
         location: material.location,
         status: material.status,
@@ -201,6 +258,8 @@ const getMyMaterials = async (req, res) => {
           name: material.providerId.name,
           email: material.providerId.email,
           organization: material.providerId.organization,
+          averageRating: material.providerId.averageRating || 0,
+          totalReviews: material.providerId.totalReviews || 0,
         },
         location: material.location,
         status: material.status,
@@ -227,7 +286,7 @@ const getAvailableMaterials = async (req, res) => {
 
     // Get all available materials without location filter
     const materials = await Material.find(query)
-      .populate('providerId', 'name email organization')
+      .populate('providerId', 'name email organization averageRating totalReviews')
       .sort({ createdAt: -1 });
 
     res.json({
@@ -245,6 +304,8 @@ const getAvailableMaterials = async (req, res) => {
           name: material.providerId.name,
           email: material.providerId.email,
           organization: material.providerId.organization,
+          averageRating: material.providerId.averageRating || 0,
+          totalReviews: material.providerId.totalReviews || 0,
         },
         location: material.location,
         status: material.status,
@@ -460,6 +521,8 @@ const getMaterialById = async (req, res) => {
           name: material.providerId.name,
           email: material.providerId.email,
           organization: material.providerId.organization,
+          averageRating: material.providerId.averageRating || 0,
+          totalReviews: material.providerId.totalReviews || 0,
         },
         location: material.location,
         status: material.status,

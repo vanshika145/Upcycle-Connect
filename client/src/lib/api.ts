@@ -188,6 +188,8 @@ export interface Material {
     name: string;
     email: string;
     organization?: string;
+    averageRating?: number;
+    totalReviews?: number;
   };
   location: {
     type: 'Point';
@@ -630,6 +632,212 @@ export const impactAPI = {
         method: 'GET',
       },
       true
+    );
+  },
+};
+
+// Analytics API - Dynamic chart data from MongoDB aggregations
+export const analyticsAPI = {
+  // Get category-wise waste reuse breakdown (global)
+  getCategoryBreakdown: async (): Promise<
+    Array<{
+      category: string;
+      total: number;
+      count: number;
+    }>
+  > => {
+    return apiRequest<Array<{ category: string; total: number; count: number }>>(
+      '/api/analytics/category-breakdown',
+      {
+        method: 'GET',
+      },
+      false // Public endpoint
+    );
+  },
+
+  // Get month-wise CO₂ reduction (global)
+  getCO2Monthly: async (): Promise<
+    Array<{
+      year: number;
+      month: number;
+      co2: number;
+      count: number;
+    }>
+  > => {
+    return apiRequest<
+      Array<{
+        year: number;
+        month: number;
+        co2: number;
+        count: number;
+      }>
+    >(
+      '/api/analytics/co2-monthly',
+      {
+        method: 'GET',
+      },
+      false // Public endpoint
+    );
+  },
+
+  // Get provider-specific monthly impact
+  getProviderMonthly: async (providerId: string): Promise<
+    Array<{
+      year: number;
+      month: number;
+      materialsCount: number;
+      totalQuantity: number;
+    }>
+  > => {
+    return apiRequest<
+      Array<{
+        year: number;
+        month: number;
+        materialsCount: number;
+        totalQuantity: number;
+      }>
+    >(
+      `/api/analytics/provider/${providerId}/monthly`,
+      {
+        method: 'GET',
+      },
+      true // Requires authentication
+    );
+  },
+};
+
+// Notification API
+export interface Notification {
+  id: string;
+  type: 'REQUEST' | 'PAYMENT' | 'ORDER' | 'APPROVED' | 'DISPATCHED';
+  message: string;
+  read: boolean;
+  createdAt: string;
+  metadata?: {
+    requestId?: string;
+    materialId?: string;
+    paymentId?: string;
+  };
+}
+
+export const notificationAPI = {
+  // Get all notifications for authenticated user
+  getNotifications: async (): Promise<{
+    notifications: Notification[];
+    unreadCount: number;
+  }> => {
+    return apiRequest<{
+      notifications: Notification[];
+      unreadCount: number;
+    }>(
+      '/api/notifications',
+      {
+        method: 'GET',
+      },
+      true
+    );
+  },
+
+  // Mark a notification as read
+  markAsRead: async (notificationId: string): Promise<{ message: string; notification: Notification }> => {
+    return apiRequest<{ message: string; notification: Notification }>(
+      `/api/notifications/${notificationId}/read`,
+      {
+        method: 'PATCH',
+      },
+      true
+    );
+  },
+
+  // Mark all notifications as read
+  markAllAsRead: async (): Promise<{ message: string; updatedCount: number }> => {
+    return apiRequest<{ message: string; updatedCount: number }>(
+      '/api/notifications/read-all',
+      {
+        method: 'PATCH',
+      },
+      true
+    );
+  },
+};
+
+// AI Search API
+export const aiSearchAPI = {
+  // AI-powered material search
+  search: async (
+    query: string,
+    latitude?: number,
+    longitude?: number,
+    radius?: number
+  ): Promise<{
+    query: string;
+    categories: Array<{ name: string; weight: number; reason: string }>;
+    materials: Material[];
+    count: number;
+    aiAnalysis: any;
+  }> => {
+    return apiRequest<{
+      query: string;
+      categories: string[];
+      materials: Material[];
+      count: number;
+    }>(
+      '/api/search/ai',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          query,
+          latitude,
+          longitude,
+          radius: radius || 50,
+        }),
+      },
+      true
+    );
+  },
+};
+
+// Review API
+export interface ProviderReview {
+  id: string;
+  rating: number;
+  review?: string;
+  seeker: {
+    name: string;
+    college?: string;
+  };
+  createdAt: string;
+}
+
+export const reviewAPI = {
+  // Create a review for a provider
+  createReview: async (
+    exchangeId: string,
+    rating: number,
+    review?: string
+  ): Promise<{ message: string; review: ProviderReview }> => {
+    return apiRequest<{ message: string; review: ProviderReview }>(
+      '/api/reviews',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          exchangeId,
+          rating,
+          review,
+        }),
+      },
+      true
+    );
+  },
+
+  // Get reviews for a provider
+  getProviderReviews: async (providerId: string): Promise<{ reviews: ProviderReview[] }> => {
+    return apiRequest<{ reviews: ProviderReview[] }>(
+      `/api/reviews/provider/${providerId}`,
+      {
+        method: 'GET',
+      },
+      false
     );
   },
 };

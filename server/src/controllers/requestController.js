@@ -3,6 +3,7 @@ const Material = require('../models/Material');
 const User = require('../models/User');
 const PDFDocument = require('pdfkit');
 const ImpactLog = require('../models/ImpactLog');
+const { createNotification } = require('./notificationController');
 const {
   calculateCO2Saved,
   calculateWasteDiverted,
@@ -88,12 +89,28 @@ const createRequest = async (req, res) => {
 
     console.log(`✅ Request created: ${seeker.name} requested "${material.title}"`);
 
+    // Create notification for provider
+    const providerId = material.providerId._id;
+    const notificationMessage = `New request for "${material.title}" from ${seeker.name}${seeker.college ? ` (${seeker.college})` : ''}`;
+    
+    const notification = await createNotification(
+      providerId,
+      'REQUEST',
+      notificationMessage,
+      {
+        requestId: request._id,
+        materialId: material._id,
+      }
+    );
+
     // Emit Socket.IO event to provider (after DB save success)
     try {
       const socketIO = req.app.get('socketIO');
       if (socketIO && socketIO.emitToUser) {
-        const providerId = material.providerId._id.toString();
-        socketIO.emitToUser(providerId, 'requestSent', {
+        const providerIdStr = providerId.toString();
+        
+        // Emit requestSent event (existing)
+        socketIO.emitToUser(providerIdStr, 'requestSent', {
           request: {
             id: request._id.toString(),
             material: {
@@ -112,8 +129,23 @@ const createRequest = async (req, res) => {
             status: request.status,
             createdAt: request.createdAt,
           },
-          message: `New request for "${material.title}"`,
+          message: notificationMessage,
         });
+
+        // Emit newNotification event with notification data
+        if (notification) {
+          socketIO.emitToUser(providerIdStr, 'newNotification', {
+            id: notification._id.toString(),
+            type: notification.type,
+            message: notification.message,
+            read: notification.read,
+            createdAt: notification.createdAt,
+            metadata: {
+              requestId: request._id.toString(),
+              materialId: material._id.toString(),
+            },
+          });
+        }
       }
     } catch (socketError) {
       console.error('⚠️ Failed to notify provider via Socket.IO:', socketError);
@@ -128,6 +160,8 @@ const createRequest = async (req, res) => {
           title: request.materialId.title,
           category: request.materialId.category,
           quantity: request.materialId.quantity,
+          price: request.materialId.price,
+          priceUnit: request.materialId.priceUnit,
         },
         seeker: {
           id: request.seekerId._id,
@@ -178,6 +212,8 @@ const getProviderRequests = async (req, res) => {
           title: req.materialId.title,
           category: req.materialId.category,
           quantity: req.materialId.quantity,
+          price: req.materialId.price,
+          priceUnit: req.materialId.priceUnit,
           images: req.materialId.images,
           location: req.materialId.location,
           status: req.materialId.status,
@@ -234,6 +270,8 @@ const getSeekerRequests = async (req, res) => {
           title: req.materialId.title,
           category: req.materialId.category,
           quantity: req.materialId.quantity,
+          price: req.materialId.price,
+          priceUnit: req.materialId.priceUnit,
           images: req.materialId.images,
           location: req.materialId.location,
           status: req.materialId.status,
@@ -324,36 +362,94 @@ const updateRequestStatus = async (req, res) => {
 
     console.log(`✅ Request ${status}: ${request.materialId.title} by ${request.seekerId.name}`);
 
-    // Emit Socket.IO event to seeker (after DB save success)
-    try {
-      const socketIO = req.app.get('socketIO');
-      if (socketIO && socketIO.emitToUser) {
-        const seekerId = request.seekerId._id.toString();
-        const eventName = status === 'approved' ? 'requestApproved' : 'requestRejected';
-        
-        socketIO.emitToUser(seekerId, eventName, {
-          request: {
-            id: request._id.toString(),
-            material: {
-              id: request.materialId._id.toString(),
-              title: request.materialId.title,
-              category: request.materialId.category,
+    // Create notification for seeker when request is approved
+    if (status === 'approved') {
+      const seekerId = request.seekerId._id;
+      const notificationMessage = `Your request for "${request.materialId.title}" has been approved by ${request.providerId.name}${request.providerId.organization ? ` (${request.providerId.organization})` : ''}`;
+      
+      const notification = await createNotification(
+        seekerId,
+        'APPROVED',
+        notificationMessage,
+        {
+          requestId: request._id,
+          materialId: request.materialId._id,
+        }
+      );
+
+      // Emit Socket.IO event to seeker (after DB save success)
+      try {
+        const socketIO = req.app.get('socketIO');
+        if (socketIO && socketIO.emitToUser) {
+          const seekerIdStr = seekerId.toString();
+          
+          // Emit requestApproved event (existing)
+          socketIO.emitToUser(seekerIdStr, 'requestApproved', {
+            request: {
+              id: request._id.toString(),
+              material: {
+                id: request.materialId._id.toString(),
+                title: request.materialId.title,
+                category: request.materialId.category,
+              },
+              provider: {
+                id: request.providerId._id.toString(),
+                name: request.providerId.name,
+                organization: request.providerId.organization,
+              },
+              status: request.status,
+              updatedAt: request.updatedAt,
             },
-            provider: {
-              id: request.providerId._id.toString(),
-              name: request.providerId.name,
-              organization: request.providerId.organization,
-            },
-            status: request.status,
-            updatedAt: request.updatedAt,
-          },
-          message: status === 'approved' 
-            ? `Your request for "${request.materialId.title}" has been approved!`
-            : `Your request for "${request.materialId.title}" has been rejected.`,
-        });
+            message: notificationMessage,
+          });
+
+          // Emit newNotification event with notification data
+          if (notification) {
+            socketIO.emitToUser(seekerIdStr, 'newNotification', {
+              id: notification._id.toString(),
+              type: notification.type,
+              message: notification.message,
+              read: notification.read,
+              createdAt: notification.createdAt,
+              metadata: {
+                requestId: request._id.toString(),
+                materialId: request.materialId._id.toString(),
+              },
+            });
+          }
+        }
+      } catch (socketError) {
+        console.error('⚠️ Failed to notify seeker via Socket.IO:', socketError);
       }
-    } catch (socketError) {
-      console.error('⚠️ Failed to notify seeker via Socket.IO:', socketError);
+    } else {
+      // For rejected requests, just emit the existing event
+      try {
+        const socketIO = req.app.get('socketIO');
+        if (socketIO && socketIO.emitToUser) {
+          const seekerId = request.seekerId._id.toString();
+          
+          socketIO.emitToUser(seekerId, 'requestRejected', {
+            request: {
+              id: request._id.toString(),
+              material: {
+                id: request.materialId._id.toString(),
+                title: request.materialId.title,
+                category: request.materialId.category,
+              },
+              provider: {
+                id: request.providerId._id.toString(),
+                name: request.providerId.name,
+                organization: request.providerId.organization,
+              },
+              status: request.status,
+              updatedAt: request.updatedAt,
+            },
+            message: `Request rejected for "${request.materialId.title}"`,
+          });
+        }
+      } catch (socketError) {
+        console.error('⚠️ Failed to notify seeker via Socket.IO:', socketError);
+      }
     }
 
     res.json({
@@ -522,13 +618,28 @@ const dispatchOrder = async (req, res) => {
 
     console.log(`✅ Order dispatched: ${request.materialId.title} to ${request.seekerId.name}`);
 
+    // Create notification for seeker when order is dispatched
+    const seekerId = request.seekerId._id;
+    const notificationMessage = `Your order for "${request.materialId.title}" has been dispatched and is ready for pickup!`;
+    
+    const notification = await createNotification(
+      seekerId,
+      'DISPATCHED',
+      notificationMessage,
+      {
+        requestId: request._id,
+        materialId: request.materialId._id,
+      }
+    );
+
     // Emit Socket.IO event to seeker
     try {
       const socketIO = req.app.get('socketIO');
       if (socketIO && socketIO.emitToUser) {
-        const seekerId = request.seekerId._id.toString();
+        const seekerIdStr = seekerId.toString();
         
-        socketIO.emitToUser(seekerId, 'orderDispatched', {
+        // Emit orderDispatched event (existing)
+        socketIO.emitToUser(seekerIdStr, 'orderDispatched', {
           request: {
             id: request._id.toString(),
             material: {
@@ -543,8 +654,23 @@ const dispatchOrder = async (req, res) => {
             invoiceNumber: request.invoiceNumber,
             invoiceUrl: request.invoiceUrl,
           },
-          message: `Your order for "${request.materialId.title}" has been dispatched!`,
+          message: notificationMessage,
         });
+
+        // Emit newNotification event with notification data
+        if (notification) {
+          socketIO.emitToUser(seekerIdStr, 'newNotification', {
+            id: notification._id.toString(),
+            type: notification.type,
+            message: notification.message,
+            read: notification.read,
+            createdAt: notification.createdAt,
+            metadata: {
+              requestId: request._id.toString(),
+              materialId: request.materialId._id.toString(),
+            },
+          });
+        }
       }
     } catch (socketError) {
       console.error('⚠️ Failed to notify seeker via Socket.IO:', socketError);
@@ -648,6 +774,20 @@ const receiveOrder = async (req, res) => {
 
     console.log(`✅ Order received: ${request.materialId.title} by ${seeker.name}`);
 
+    // Create notification for provider (order/pickup confirmation)
+    const providerId = request.providerId._id;
+    const notificationMessage = `Order for "${request.materialId.title}" has been successfully received by ${seeker.name}`;
+    
+    const notification = await createNotification(
+      providerId,
+      'ORDER',
+      notificationMessage,
+      {
+        requestId: request._id,
+        materialId: request.materialId._id,
+      }
+    );
+
     // Calculate and log impact (only once per completed exchange)
     try {
       // Check if ImpactLog already exists for this request
@@ -696,12 +836,14 @@ const receiveOrder = async (req, res) => {
       console.error('⚠️ Failed to log impact:', impactError);
     }
 
-    // Emit Socket.IO event to provider
+    // Emit Socket.IO events to provider and seeker
     try {
       const socketIO = req.app.get('socketIO');
       if (socketIO && socketIO.emitToUser) {
         const providerId = request.providerId._id.toString();
+        const seekerId = seeker._id.toString();
         
+        // Notify provider about order received
         socketIO.emitToUser(providerId, 'orderReceived', {
           request: {
             id: request._id.toString(),
@@ -716,9 +858,43 @@ const receiveOrder = async (req, res) => {
           },
           message: `Order for "${request.materialId.title}" has been successfully received by ${seeker.name}`,
         });
+
+        // Emit materialReused event to both provider and seeker for analytics updates
+        socketIO.emitToUser(providerIdStr, 'materialReused', {
+          material: {
+            id: request.materialId._id.toString(),
+            title: request.materialId.title,
+            category: request.materialId.category,
+          },
+          message: `Material "${request.materialId.title}" has been reused`,
+        });
+
+        socketIO.emitToUser(seekerId, 'materialReused', {
+          material: {
+            id: request.materialId._id.toString(),
+            title: request.materialId.title,
+            category: request.materialId.category,
+          },
+          message: `Material "${request.materialId.title}" has been reused`,
+        });
+
+        // Emit newNotification event for order confirmation
+        if (notification) {
+          socketIO.emitToUser(providerIdStr, 'newNotification', {
+            id: notification._id.toString(),
+            type: notification.type,
+            message: notification.message,
+            read: notification.read,
+            createdAt: notification.createdAt,
+            metadata: {
+              requestId: request._id.toString(),
+              materialId: request.materialId._id.toString(),
+            },
+          });
+        }
       }
     } catch (socketError) {
-      console.error('⚠️ Failed to notify provider via Socket.IO:', socketError);
+      console.error('⚠️ Failed to notify users via Socket.IO:', socketError);
     }
 
     res.json({

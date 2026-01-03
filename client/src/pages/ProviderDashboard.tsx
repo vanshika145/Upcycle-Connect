@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
-  Recycle, Plus, Package, ClipboardList, BarChart3, Settings, 
-  LogOut, Bell, Search, TrendingUp, Leaf, Upload, MapPin,
+  Recycle, Plus, Package, ClipboardList, BarChart3, 
+  LogOut, Bell, TrendingUp, Leaf, Upload, MapPin,
   Clock, CheckCircle, XCircle, ChevronRight, Calendar, Users, Loader2
 } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -12,16 +12,36 @@ import { Label } from "@/components/ui/label";
 import { AnimatedCounter } from "@/components/AnimatedCounter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSocket } from "@/contexts/SocketContext";
-import { materialAPI, Material, CreateMaterialData, requestAPI, MaterialRequest, impactAPI } from "@/lib/api";
+import { materialAPI, Material, CreateMaterialData, requestAPI, MaterialRequest, impactAPI, analyticsAPI } from "@/lib/api";
 import { toast } from "sonner";
 import { LocationMap } from "@/components/LocationMap";
+import NotificationBell from "@/components/NotificationBell";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title,
+  Tooltip,
+  Legend,
+} from 'chart.js';
+import { Bar } from 'react-chartjs-2';
+
+// Register Chart.js components
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title,
+  Tooltip,
+  Legend
+);
 
 const navItems = [
   { icon: Plus, label: "Add Material", id: "add" },
   { icon: Package, label: "My Listings", id: "listings" },
   { icon: ClipboardList, label: "Requests", id: "requests" },
   { icon: BarChart3, label: "Analytics", id: "analytics" },
-  { icon: Settings, label: "Settings", id: "settings" },
 ];
 
 const categories = ["Chemicals", "Glassware", "Electronics", "Metals", "Plastics", "Other"];
@@ -130,6 +150,8 @@ const ProviderDashboard = () => {
   const [imagePreview, setImagePreview] = useState<string[]>([]);
   const [requests, setRequests] = useState<MaterialRequest[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(false);
+  const [providerMonthly, setProviderMonthly] = useState<any[]>([]);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
 
   // Get user's initial from name
   const getUserInitial = () => {
@@ -171,8 +193,27 @@ const ProviderDashboard = () => {
   useEffect(() => {
     if (activeTab === "requests" && user) {
       fetchRequests();
+    } else if (activeTab === "analytics" && user && user.id) {
+      fetchProviderMonthlyData();
     }
   }, [activeTab, user]);
+
+  // Fetch provider-specific monthly analytics
+  const fetchProviderMonthlyData = async () => {
+    if (!user?.id) return;
+    
+    try {
+      setAnalyticsLoading(true);
+      const data = await analyticsAPI.getProviderMonthly(user.id);
+      setProviderMonthly(data);
+      console.log('✅ Fetched provider monthly data:', data);
+    } catch (error: any) {
+      console.error("Error fetching provider monthly data:", error);
+      toast.error(error.message || "Failed to fetch analytics data");
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  };
 
   // Listen for real-time request notifications via Socket.IO
   useEffect(() => {
@@ -187,12 +228,23 @@ const ProviderDashboard = () => {
       // Show a badge or indicator that there's a new request
     };
 
+    // Listen for material reuse events (when order is received)
+    const handleMaterialReused = () => {
+      console.log('♻️ Material reused notification received');
+      // Refresh analytics data when material is reused
+      if (activeTab === "analytics" && user?.id) {
+        fetchProviderMonthlyData();
+      }
+    };
+
     socket.on('requestSent', handleRequestSent);
+    socket.on('materialReused', handleMaterialReused);
 
     return () => {
       socket.off('requestSent', handleRequestSent);
+      socket.off('materialReused', handleMaterialReused);
     };
-  }, [socket, activeTab]);
+  }, [socket, activeTab, user]);
 
   // Get user location on mount (auto mode)
   useEffect(() => {
@@ -451,7 +503,16 @@ const ProviderDashboard = () => {
       fetchMaterials();
     } catch (error: any) {
       console.error("Error creating material:", error);
-      toast.error(error.message || "Failed to add material");
+      
+      // Handle compliance errors specifically
+      if (error.message && error.message.includes('violates safety and compliance')) {
+        toast.error("Compliance Error", {
+          description: error.message || "This material violates safety and compliance guidelines. Please contact support if you believe this is an error.",
+          duration: 8000,
+        });
+      } else {
+        toast.error(error.message || "Failed to add material");
+      }
     } finally {
       setSubmitting(false);
     }
@@ -593,26 +654,19 @@ const ProviderDashboard = () => {
       {/* Main Content */}
       <div className="flex-1 flex flex-col">
         {/* Top Bar */}
-        <header className="h-16 border-b border-border bg-card/50 backdrop-blur-sm flex items-center justify-between px-6">
+        <header className="h-16 border-b border-border bg-card/50 backdrop-blur-sm flex items-center justify-between px-6 relative z-10">
           <div className="flex items-center gap-4">
             <h1 className="font-display font-semibold text-xl">
               {navItems.find((item) => item.id === activeTab)?.label || "Dashboard"}
             </h1>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input placeholder="Search..." className="pl-9 w-64 h-10" />
-            </div>
-            <Button variant="ghost" size="icon" className="relative">
-              <Bell className="w-5 h-5" />
-              <span className="absolute top-1 right-1 w-2 h-2 bg-primary rounded-full" />
-            </Button>
+          <div className="flex items-center gap-4 relative z-[100]">
+            <NotificationBell userId={user?.id} />
           </div>
         </header>
 
         {/* Content Area */}
-        <main className="flex-1 p-6 overflow-auto">
+        <main className="flex-1 p-6 overflow-auto relative z-0">
           {/* Impact Summary Header - Always visible, outside AnimatePresence */}
           <ImpactSummaryHeader />
 
@@ -631,7 +685,14 @@ const ProviderDashboard = () => {
                   
                   <form onSubmit={handleSubmit} className="space-y-6">
                     <div className="space-y-2">
-                      <Label htmlFor="title">Material Name *</Label>
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="title">Material Name *</Label>
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <span className="px-2 py-0.5 rounded-full bg-eco-green/10 text-eco-green border border-eco-green/20">
+                            Compliance Safe Listing
+                          </span>
+                        </div>
+                      </div>
                       <Input 
                         id="title"
                         placeholder="e.g., Laboratory Glass Beakers" 
@@ -641,6 +702,9 @@ const ProviderDashboard = () => {
                         required
                         disabled={submitting}
                       />
+                      <p className="text-xs text-muted-foreground">
+                        All materials are checked against safety and compliance guidelines before listing.
+                      </p>
                     </div>
 
                     <div className="space-y-2">
@@ -1212,28 +1276,73 @@ const ProviderDashboard = () => {
                 exit={{ opacity: 0, y: -20 }}
                 className="grid gap-6"
               >
-                <div className="glass-card rounded-2xl p-6">
-                  <h3 className="font-semibold mb-4">CO₂ Reduction Over Time</h3>
-                  <div className="h-64 flex items-end gap-2">
-                    {[40, 65, 45, 80, 55, 90, 70, 85, 60, 95, 75, 100].map((height, i) => (
-                      <motion.div
-                        key={i}
-                        initial={{ height: 0 }}
-                        animate={{ height: `${height}%` }}
-                        transition={{ delay: i * 0.05, duration: 0.5 }}
-                        className="flex-1 gradient-primary rounded-t-lg"
+                {analyticsLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                  </div>
+                ) : providerMonthly.length > 0 ? (
+                  <div className="glass-card rounded-2xl p-6">
+                    <h3 className="font-semibold mb-4">Month-wise Reused Materials</h3>
+                    <div className="h-64">
+                      <Bar
+                        data={{
+                          labels: providerMonthly.map((item) => {
+                            // Convert month number to month name
+                            const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                            return `${monthNames[item.month - 1]} ${item.year}`;
+                          }),
+                          datasets: [
+                            {
+                              label: 'Materials Reused',
+                              data: providerMonthly.map((item) => item.materialsCount),
+                              backgroundColor: 'hsl(var(--primary))',
+                              borderRadius: 8,
+                            },
+                          ],
+                        }}
+                        options={{
+                          responsive: true,
+                          maintainAspectRatio: false,
+                          plugins: {
+                            legend: {
+                              display: false,
+                            },
+                            tooltip: {
+                              callbacks: {
+                                label: (context) => {
+                                  const item = providerMonthly[context.dataIndex];
+                                  return [
+                                    `Materials: ${item.materialsCount}`,
+                                    `Quantity: ${item.totalQuantity.toFixed(1)} kg`,
+                                  ];
+                                },
+                              },
+                            },
+                          },
+                          scales: {
+                            y: {
+                              beginAtZero: true,
+                              ticks: {
+                                stepSize: 1,
+                                callback: (value) => `${value} materials`,
+                              },
+                            },
+                          },
+                        }}
                       />
-                    ))}
+                    </div>
                   </div>
-                  <div className="flex justify-between mt-2 text-xs text-muted-foreground">
-                    <span>Jan</span>
-                    <span>Mar</span>
-                    <span>May</span>
-                    <span>Jul</span>
-                    <span>Sep</span>
-                    <span>Nov</span>
+                ) : (
+                  <div className="glass-card rounded-2xl p-6 flex items-center justify-center min-h-[300px]">
+                    <div className="text-center">
+                      <Package className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+                      <p className="text-muted-foreground">No analytics data available yet</p>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Analytics will appear once materials are reused
+                      </p>
+                    </div>
                   </div>
-                </div>
+                )}
               </motion.div>
             )}
           </AnimatePresence>
