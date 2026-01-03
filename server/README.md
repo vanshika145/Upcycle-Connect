@@ -15,7 +15,9 @@ A production-ready backend server for UpCycle Connect, a hyper-local sustainabil
 
 - User authentication with Email/Password and Google Sign-In
 - User roles: provider (Labs/Industries), seeker (Students/Innovators), admin
-- Geospatial user locations
+- Geospatial user locations with MongoDB 2dsphere indexing
+- Location-based material discovery using MongoDB geospatial queries
+- Material management with Cloudinary image uploads
 - Protected API routes
 - CORS enabled
 - Centralized error handling
@@ -144,6 +146,70 @@ GET /api/auth/me
 Authorization: Bearer <firebase_id_token>
 ```
 
+### Material Routes
+
+- `POST /api/materials` - Create a new material (protected, requires file upload)
+- `GET /api/materials/my-materials` - Get all materials for logged-in provider (protected)
+- `GET /api/materials/nearby` - Get nearby materials using geospatial query (public)
+- `GET /api/materials/available` - Get all available materials (public)
+- `GET /api/materials/:id` - Get material by ID (public)
+- `PATCH /api/materials/:id/status` - Update material status (protected)
+- `DELETE /api/materials/:id` - Delete material (protected)
+
+#### Create Material (with images)
+```bash
+POST /api/materials
+Content-Type: multipart/form-data
+Authorization: Bearer <firebase_id_token>
+
+Form Data:
+- title: "Laboratory Glass Beakers"
+- category: "Glassware"
+- description: "Set of 10 beakers"
+- quantity: "10 pieces"
+- latitude: 40.7128
+- longitude: -74.0060
+- images: [File, File, ...] (max 5, optional)
+```
+
+#### Get Nearby Materials (Geospatial Query)
+```bash
+GET /api/materials/nearby?lat=40.7128&lng=-74.0060&radius=10&category=Glassware
+
+Query Parameters:
+- lat (required): Latitude of search center
+- lng (required): Longitude of search center
+- radius (optional): Search radius in kilometers (default: 10, max: 1000)
+- category (optional): Filter by category
+```
+
+**Response:**
+```json
+{
+  "materials": [
+    {
+      "id": "...",
+      "title": "Laboratory Glass Beakers",
+      "category": "Glassware",
+      "location": {
+        "type": "Point",
+        "coordinates": [-74.0060, 40.7128]
+      },
+      "distance": 2.3,
+      ...
+    }
+  ],
+  "count": 1,
+  "searchLocation": {
+    "latitude": 40.7128,
+    "longitude": -74.0060,
+    "radius": 10
+  }
+}
+```
+
+**Note:** Coordinates are stored as `[longitude, latitude]` following GeoJSON standard. The endpoint uses MongoDB's `$near` operator with a 2dsphere index for efficient geospatial queries.
+
 ## Authentication Flow
 
 ### Email/Password Authentication
@@ -192,11 +258,37 @@ Visit `http://localhost:5000/health` to check if the server is running.
   college: String,       // For seekers
   location: {
     type: 'Point',
-    coordinates: [longitude, latitude]
+    coordinates: [longitude, latitude]  // GeoJSON format
   },
   createdAt: Date
 }
 ```
+
+## Material Model
+
+```javascript
+{
+  title: String,
+  category: 'Chemicals' | 'Glassware' | 'Electronics' | 'Metals' | 'Plastics' | 'Bio Materials' | 'Other',
+  description: String,
+  quantity: String,
+  images: [
+    {
+      url: String,        // Cloudinary secure URL
+      publicId: String    // Cloudinary public ID for deletion
+    }
+  ],
+  providerId: ObjectId,   // Reference to User
+  location: {
+    type: 'Point',
+    coordinates: [longitude, latitude]  // GeoJSON format [lng, lat] for geospatial queries
+  },
+  status: 'available' | 'requested' | 'picked',
+  createdAt: Date
+}
+```
+
+**Geospatial Index:** The Material model includes a 2dsphere index on the `location` field for efficient nearby material searches using MongoDB's `$near` operator.
 
 ## Security Notes
 

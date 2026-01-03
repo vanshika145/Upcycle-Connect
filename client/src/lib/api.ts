@@ -275,5 +275,38 @@ export const materialAPI = {
       method: 'DELETE',
     }, true);
   },
+
+  // Get nearby materials (for seekers to discover materials)
+  getNearby: async (
+    latitude: number,
+    longitude: number,
+    radius: number = 10,
+    category?: string
+  ): Promise<{ materials: Material[]; count: number; searchLocation: { latitude: number; longitude: number; radius: number } }> => {
+    // Validate coordinates before making request
+    if (latitude === 0 && longitude === 0) {
+      throw new Error('Invalid coordinates: (0,0) is not a valid location');
+    }
+    
+    if (isNaN(latitude) || isNaN(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+      throw new Error('Invalid coordinate ranges');
+    }
+
+    const params = new URLSearchParams();
+    params.append('lat', latitude.toString());
+    params.append('lng', longitude.toString());
+    params.append('radius', radius.toString());
+    if (category && category !== 'All') {
+      params.append('category', category);
+    }
+    
+    console.log('🔍 Fetching nearby materials:', { latitude, longitude, radius, category });
+    
+    const url = `/api/materials/nearby?${params.toString()}`;
+    
+    return apiRequest<{ materials: Material[]; count: number; searchLocation: { latitude: number; longitude: number; radius: number } }>(url, {
+      method: 'GET',
+    }, false); // Public endpoint, no auth required
+  },
 };
 

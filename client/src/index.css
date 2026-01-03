@@ -4,6 +4,22 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 
+/* Leaflet CSS */
+@import 'leaflet/dist/leaflet.css';
+
+/* Fix Leaflet z-index issues */
+.leaflet-container {
+  z-index: 0;
+}
+
+.leaflet-control-container {
+  z-index: 400;
+}
+
+.leaflet-popup {
+  z-index: 1000;
+}
+
 @layer base {
   :root {
     /* Core Eco Palette */

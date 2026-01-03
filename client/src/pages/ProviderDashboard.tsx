@@ -13,6 +13,7 @@ import { AnimatedCounter } from "@/components/AnimatedCounter";
 import { useAuth } from "@/contexts/AuthContext";
 import { materialAPI, Material, CreateMaterialData } from "@/lib/api";
 import { toast } from "sonner";
+import { LocationMap } from "@/components/LocationMap";
 
 const navItems = [
   { icon: Plus, label: "Add Material", id: "add" },
@@ -62,6 +63,17 @@ const ProviderDashboard = () => {
     return user.name.charAt(0).toUpperCase();
   };
 
+  // Helper function to extract latitude and longitude from Material location
+  // MongoDB stores coordinates as [longitude, latitude] (GeoJSON format)
+  const getMaterialCoordinates = (material: Material) => {
+    if (!material.location || !material.location.coordinates) {
+      return { latitude: 0, longitude: 0 };
+    }
+    // MongoDB GeoJSON: coordinates[0] = longitude, coordinates[1] = latitude
+    const [longitude, latitude] = material.location.coordinates;
+    return { latitude, longitude };
+  };
+
   // Fetch materials on component mount and when activeTab changes
   useEffect(() => {
     if (activeTab === "listings" && user) {
@@ -72,21 +84,60 @@ const ProviderDashboard = () => {
   // Get user location on mount (auto mode)
   useEffect(() => {
     if (locationMode === "auto" && navigator.geolocation) {
+      // Add timeout and options for better accuracy
+      const geoOptions = {
+        enableHighAccuracy: true,
+        timeout: 10000, // 10 seconds
+        maximumAge: 0, // Don't use cached position
+      };
+
       navigator.geolocation.getCurrentPosition(
         (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          
+          // Validate coordinates are not 0,0 and within valid ranges
+          if (
+            lat === 0 && lng === 0 ||
+            lat < -90 || lat > 90 ||
+            lng < -180 || lng > 180 ||
+            isNaN(lat) || isNaN(lng)
+          ) {
+            console.error('❌ Invalid geolocation coordinates:', { lat, lng });
+            setLocationDetected(false);
+            toast.error("Invalid location detected. Please enter location manually.");
+            return;
+          }
+
+          console.log('✅ Geolocation success:', { lat, lng, accuracy: position.coords.accuracy });
+          
           setFormData(prev => ({
             ...prev,
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
+            latitude: lat,
+            longitude: lng,
           }));
           setLocationDetected(true);
         },
         (error) => {
-          console.warn("Geolocation error:", error);
+          console.error("❌ Geolocation error:", error.code, error.message);
           setLocationDetected(false);
+          setFormData(prev => ({
+            ...prev,
+            latitude: 0,
+            longitude: 0,
+          }));
           toast.error("Auto-location detection failed. Please enter location manually.");
-        }
+        },
+        geoOptions
       );
+    } else if (locationMode === "auto") {
+      // Reset if geolocation is not available
+      setLocationDetected(false);
+      setFormData(prev => ({
+        ...prev,
+        latitude: 0,
+        longitude: 0,
+      }));
     }
   }, [locationMode]);
 
@@ -109,6 +160,21 @@ const ProviderDashboard = () => {
     try {
       setLoading(true);
       const response = await materialAPI.getMyMaterials();
+      
+      // Log materials with location data for debugging
+      response.materials.forEach((material) => {
+        if (material.location && material.location.coordinates) {
+          const [lng, lat] = material.location.coordinates;
+          console.log(`📍 Material "${material.title}" location:`, {
+            raw: material.location.coordinates,
+            extracted: { latitude: lat, longitude: lng },
+            formatted: `${lat.toFixed(4)}, ${lng.toFixed(4)}`
+          });
+        } else {
+          console.warn(`⚠️ Material "${material.title}" has no location data`);
+        }
+      });
+      
       setMaterials(response.materials);
     } catch (error: any) {
       console.error("Error fetching materials:", error);
@@ -157,10 +223,31 @@ const ProviderDashboard = () => {
       finalLatitude = lat;
       finalLongitude = lng;
     } else {
-      if (!formData.latitude || !formData.longitude || !locationDetected) {
+      // Auto mode: Validate coordinates are valid and detected
+      if (!locationDetected) {
         toast.error("Location not detected. Please switch to manual entry or enable location access");
         return;
       }
+      
+      // Explicitly check for 0,0 coordinates (invalid)
+      if (finalLatitude === 0 && finalLongitude === 0) {
+        toast.error("Invalid location coordinates (0,0). Please use manual entry or wait for location detection.");
+        return;
+      }
+      
+      // Validate coordinate ranges
+      if (finalLatitude < -90 || finalLatitude > 90 || finalLongitude < -180 || finalLongitude > 180) {
+        toast.error("Invalid coordinate ranges. Please use manual entry.");
+        return;
+      }
+      
+      // Validate coordinates are numbers
+      if (isNaN(finalLatitude) || isNaN(finalLongitude)) {
+        toast.error("Invalid coordinate values. Please use manual entry.");
+        return;
+      }
+      
+      console.log('✅ Auto-detected coordinates validated:', { lat: finalLatitude, lng: finalLongitude });
     }
 
     try {
@@ -520,22 +607,54 @@ const ProviderDashboard = () => {
                             onClick={() => {
                               setLocationMode("auto");
                               if (navigator.geolocation) {
+                                const geoOptions = {
+                                  enableHighAccuracy: true,
+                                  timeout: 10000,
+                                  maximumAge: 0,
+                                };
+                                
                                 navigator.geolocation.getCurrentPosition(
                                   (position) => {
+                                    const lat = position.coords.latitude;
+                                    const lng = position.coords.longitude;
+                                    
+                                    // Validate coordinates
+                                    if (
+                                      lat === 0 && lng === 0 ||
+                                      lat < -90 || lat > 90 ||
+                                      lng < -180 || lng > 180 ||
+                                      isNaN(lat) || isNaN(lng)
+                                    ) {
+                                      console.error('❌ Invalid geolocation coordinates:', { lat, lng });
+                                      setLocationDetected(false);
+                                      toast.error("Invalid location detected. Please use manual entry.");
+                                      return;
+                                    }
+                                    
+                                    console.log('✅ Manual geolocation trigger success:', { lat, lng, accuracy: position.coords.accuracy });
+                                    
                                     setFormData(prev => ({
                                       ...prev,
-                                      latitude: position.coords.latitude,
-                                      longitude: position.coords.longitude,
+                                      latitude: lat,
+                                      longitude: lng,
                                     }));
                                     setLocationDetected(true);
-                                    toast.success("Location detected!");
+                                    toast.success(`Location detected: ${lat.toFixed(4)}, ${lng.toFixed(4)}`);
                                   },
                                   (error) => {
-                                    console.warn("Geolocation error:", error);
+                                    console.error("❌ Geolocation error:", error.code, error.message);
                                     setLocationDetected(false);
+                                    setFormData(prev => ({
+                                      ...prev,
+                                      latitude: 0,
+                                      longitude: 0,
+                                    }));
                                     toast.error("Auto-detection failed. Please use manual entry.");
-                                  }
+                                  },
+                                  geoOptions
                                 );
+                              } else {
+                                toast.error("Geolocation not supported. Please use manual entry.");
                               }
                             }}
                             disabled={submitting}
@@ -585,7 +704,20 @@ const ProviderDashboard = () => {
                                 step="any"
                                 placeholder="e.g., 40.7128"
                                 value={manualLatitude}
-                                onChange={(e) => setManualLatitude(e.target.value)}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setManualLatitude(value);
+                                  // Update map in real-time if valid
+                                  const lat = parseFloat(value);
+                                  const lng = parseFloat(manualLongitude);
+                                  if (!isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+                                    setFormData(prev => ({
+                                      ...prev,
+                                      latitude: lat,
+                                      longitude: lng,
+                                    }));
+                                  }
+                                }}
                                 disabled={submitting}
                                 className="h-12"
                               />
@@ -598,7 +730,20 @@ const ProviderDashboard = () => {
                                 step="any"
                                 placeholder="e.g., -74.0060"
                                 value={manualLongitude}
-                                onChange={(e) => setManualLongitude(e.target.value)}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setManualLongitude(value);
+                                  // Update map in real-time if valid
+                                  const lat = parseFloat(manualLatitude);
+                                  const lng = parseFloat(value);
+                                  if (!isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+                                    setFormData(prev => ({
+                                      ...prev,
+                                      latitude: lat,
+                                      longitude: lng,
+                                    }));
+                                  }
+                                }}
                                 disabled={submitting}
                                 className="h-12"
                               />
@@ -606,21 +751,46 @@ const ProviderDashboard = () => {
                           </div>
                           <div className="p-3 rounded-lg bg-muted/50 border border-border">
                             <p className="text-xs text-muted-foreground mb-1">
-                              <strong>How to get coordinates:</strong>
+                              <strong>How to set location:</strong>
                             </p>
                             <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside">
-                              <li>Search your address on Google Maps</li>
-                              <li>Right-click on the location</li>
-                              <li>Click the coordinates to copy them</li>
-                              <li>Or use a tool like <a href="https://www.latlong.net/" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">latlong.net</a></li>
+                              <li><strong>Click on the map below</strong> to select location visually</li>
+                              <li>Or enter coordinates manually (from Google Maps, latlong.net, etc.)</li>
+                              <li>Coordinates will update automatically when you click the map</li>
                             </ul>
                           </div>
                         </div>
                       )}
 
-                      <div className="h-40 rounded-xl bg-muted/50 border border-border flex items-center justify-center">
-                        <p className="text-sm text-muted-foreground">Map Preview</p>
-                      </div>
+                      <LocationMap
+                        latitude={
+                          locationMode === "auto" 
+                            ? (formData.latitude || 0)
+                            : (manualLatitude ? parseFloat(manualLatitude) : 0)
+                        }
+                        longitude={
+                          locationMode === "auto"
+                            ? (formData.longitude || 0)
+                            : (manualLongitude ? parseFloat(manualLongitude) : 0)
+                        }
+                        onLocationChange={(lat, lng) => {
+                          if (locationMode === "auto") {
+                            setFormData(prev => ({
+                              ...prev,
+                              latitude: lat,
+                              longitude: lng,
+                            }));
+                            setLocationDetected(true);
+                            toast.success(`Location set: ${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+                          } else {
+                            setManualLatitude(lat.toString());
+                            setManualLongitude(lng.toString());
+                            toast.success(`Location set: ${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+                          }
+                        }}
+                        height="400px"
+                        interactive={true}
+                      />
                     </div>
 
                     <Button 
@@ -694,6 +864,16 @@ const ProviderDashboard = () => {
                           {material.description && (
                             <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
                               {material.description}
+                            </p>
+                          )}
+                          {material.location && material.location.coordinates && (
+                            <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                              <MapPin className="w-3 h-3" />
+                              {(() => {
+                                // MongoDB stores coordinates as [longitude, latitude]
+                                const [lng, lat] = material.location.coordinates;
+                                return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+                              })()}
                             </p>
                           )}
                         </div>

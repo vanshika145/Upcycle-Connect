@@ -3,6 +3,7 @@ const {
   createMaterial,
   getMyMaterials,
   getAvailableMaterials,
+  getNearbyMaterials,
   getMaterialById,
   updateMaterialStatus,
   deleteMaterial,
@@ -16,8 +17,13 @@ const router = express.Router();
 // Use handleUpload middleware before createMaterial to process file uploads
 router.post('/', authMiddleware, handleUpload, createMaterial);
 router.get('/my-materials', authMiddleware, getMyMaterials);
-router.get('/available', getAvailableMaterials); // Public route for browsing
-router.get('/:id', getMaterialById); // Public route
+
+// Public routes for browsing
+router.get('/nearby', getNearbyMaterials); // Location-based search (requires lat & lng)
+router.get('/available', getAvailableMaterials); // All available materials
+router.get('/:id', getMaterialById); // Get material by ID
+
+// Protected routes
 router.patch('/:id/status', authMiddleware, updateMaterialStatus);
 router.delete('/:id', authMiddleware, deleteMaterial);
 

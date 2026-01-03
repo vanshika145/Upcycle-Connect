@@ -15,12 +15,34 @@ const createMaterial = async (req, res) => {
       return res.status(400).json({ message: 'Missing required fields' });
     }
 
-    // Validate latitude and longitude are numbers
+    // Parse and validate latitude and longitude
     const lat = parseFloat(latitude);
     const lng = parseFloat(longitude);
+    
+    // Check if parsing failed
     if (isNaN(lat) || isNaN(lng)) {
-      return res.status(400).json({ message: 'Invalid latitude or longitude' });
+      console.error('❌ Invalid coordinates (NaN):', { latitude, longitude, parsed: { lat, lng } });
+      return res.status(400).json({ message: 'Invalid latitude or longitude: must be valid numbers' });
     }
+    
+    // Explicitly reject 0,0 coordinates (invalid location)
+    if (lat === 0 && lng === 0) {
+      console.error('❌ Invalid coordinates (0,0):', { latitude, longitude });
+      return res.status(400).json({ message: 'Invalid coordinates: (0,0) is not a valid location' });
+    }
+    
+    // Validate coordinate ranges
+    if (lat < -90 || lat > 90) {
+      console.error('❌ Invalid latitude range:', { lat, latitude });
+      return res.status(400).json({ message: 'Invalid latitude: must be between -90 and 90' });
+    }
+    
+    if (lng < -180 || lng > 180) {
+      console.error('❌ Invalid longitude range:', { lng, longitude });
+      return res.status(400).json({ message: 'Invalid longitude: must be between -180 and 180' });
+    }
+    
+    console.log('✅ Material creation coordinates validated:', { lat, lng, source: 'createMaterial' });
 
     // Get provider ID from authenticated user
     const user = await User.findOne({ email: req.user.email });
@@ -170,7 +192,7 @@ const getMyMaterials = async (req, res) => {
 // Get all available materials (for seekers to browse)
 const getAvailableMaterials = async (req, res) => {
   try {
-    const { category, latitude, longitude, radius = 50 } = req.query; // radius in km
+    const { category } = req.query;
 
     // Build query
     const query = { status: 'available' };
@@ -179,30 +201,10 @@ const getAvailableMaterials = async (req, res) => {
       query.category = category;
     }
 
-    let materials;
-    
-    // If location provided, find materials within radius
-    if (latitude && longitude) {
-      materials = await Material.find({
-        ...query,
-        location: {
-          $near: {
-            $geometry: {
-              type: 'Point',
-              coordinates: [parseFloat(longitude), parseFloat(latitude)],
-            },
-            $maxDistance: radius * 1000, // Convert km to meters
-          },
-        },
-      })
-        .populate('providerId', 'name email organization')
-        .sort({ createdAt: -1 });
-    } else {
-      // Get all available materials without location filter
-      materials = await Material.find(query)
-        .populate('providerId', 'name email organization')
-        .sort({ createdAt: -1 });
-    }
+    // Get all available materials without location filter
+    const materials = await Material.find(query)
+      .populate('providerId', 'name email organization')
+      .sort({ createdAt: -1 });
 
     res.json({
       materials: materials.map((material) => ({
@@ -227,6 +229,180 @@ const getAvailableMaterials = async (req, res) => {
     console.error('Get available materials error:', error);
     res.status(500).json({ message: 'Server error' });
   }
+};
+
+// Get nearby materials using geospatial query
+const getNearbyMaterials = async (req, res) => {
+  try {
+    const { lat, lng, radius = 10, category } = req.query;
+
+    // Validate required parameters
+    if (!lat || !lng) {
+      return res.status(400).json({
+        message: 'Latitude (lat) and longitude (lng) are required',
+      });
+    }
+
+    // Parse and validate coordinates
+    const latitude = parseFloat(lat);
+    const longitude = parseFloat(lng);
+    const searchRadius = parseFloat(radius);
+
+    // Check if parsing failed
+    if (isNaN(latitude) || isNaN(longitude)) {
+      console.error('❌ Invalid nearby search coordinates (NaN):', { lat, lng, parsed: { latitude, longitude } });
+      return res.status(400).json({
+        message: 'Invalid latitude or longitude: must be valid numbers',
+      });
+    }
+
+    // Explicitly reject 0,0 coordinates (invalid location)
+    if (latitude === 0 && longitude === 0) {
+      console.error('❌ Invalid nearby search coordinates (0,0):', { lat, lng });
+      return res.status(400).json({
+        message: 'Invalid coordinates: (0,0) is not a valid search location',
+      });
+    }
+
+    // Validate latitude range
+    if (latitude < -90 || latitude > 90) {
+      console.error('❌ Invalid latitude range:', { latitude, lat });
+      return res.status(400).json({
+        message: 'Invalid latitude. Must be between -90 and 90',
+      });
+    }
+
+    // Validate longitude range
+    if (longitude < -180 || longitude > 180) {
+      console.error('❌ Invalid longitude range:', { longitude, lng });
+      return res.status(400).json({
+        message: 'Invalid longitude. Must be between -180 and 180',
+      });
+    }
+    
+    console.log('✅ Nearby search coordinates validated:', { latitude, longitude, radius: searchRadius });
+
+    // Validate radius
+    if (isNaN(searchRadius) || searchRadius <= 0 || searchRadius > 1000) {
+      return res.status(400).json({
+        message: 'Invalid radius. Must be between 0 and 1000 kilometers',
+      });
+    }
+
+    // Build query with geospatial filter
+    const query = {
+      status: 'available',
+      location: {
+        $near: {
+          $geometry: {
+            type: 'Point',
+            coordinates: [longitude, latitude], // MongoDB GeoJSON: [lng, lat]
+          },
+          $maxDistance: searchRadius * 1000, // Convert km to meters
+        },
+      },
+    };
+
+    // Add category filter if provided
+    if (category && category !== 'All') {
+      query.category = category;
+    }
+
+    // Execute geospatial query
+    const materials = await Material.find(query)
+      .populate('providerId', 'name email organization location')
+      .sort({ createdAt: -1 })
+      .limit(100); // Limit results to prevent excessive data
+
+    console.log(
+      `✅ Found ${materials.length} materials within ${searchRadius}km of [${latitude}, ${longitude}]`
+    );
+
+    // Calculate distance for each material (optional enhancement)
+    const materialsWithDistance = materials.map((material) => {
+      const materialCoords = material.location.coordinates;
+      const distance = calculateDistance(
+        latitude,
+        longitude,
+        materialCoords[1], // lat
+        materialCoords[0]  // lng
+      );
+
+      return {
+        id: material._id,
+        title: material.title,
+        category: material.category,
+        description: material.description,
+        quantity: material.quantity,
+        images: material.images,
+        providerId: material.providerId._id,
+        provider: {
+          name: material.providerId.name,
+          email: material.providerId.email,
+          organization: material.providerId.organization,
+          location: material.providerId.location,
+        },
+        location: material.location,
+        distance: Math.round(distance * 10) / 10, // Round to 1 decimal place
+        status: material.status,
+        createdAt: material.createdAt,
+      };
+    });
+
+    res.json({
+      materials: materialsWithDistance,
+      count: materialsWithDistance.length,
+      searchLocation: {
+        latitude,
+        longitude,
+        radius: searchRadius,
+      },
+    });
+  } catch (error) {
+    console.error('Get nearby materials error:', error);
+    
+    // Handle geospatial query errors
+    if (error.name === 'CastError' || error.message.includes('coordinates')) {
+      return res.status(400).json({
+        message: 'Invalid location coordinates',
+      });
+    }
+    
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/**
+ * Calculate distance between two coordinates using Haversine formula
+ * @param {number} lat1 - Latitude of first point
+ * @param {number} lon1 - Longitude of first point
+ * @param {number} lat2 - Latitude of second point
+ * @param {number} lon2 - Longitude of second point
+ * @returns {number} Distance in kilometers
+ */
+const calculateDistance = (lat1, lon1, lat2, lon2) => {
+  const R = 6371; // Earth's radius in kilometers
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const distance = R * c;
+  
+  return distance;
+};
+
+/**
+ * Convert degrees to radians
+ */
+const toRad = (degrees) => {
+  return (degrees * Math.PI) / 180;
 };
 
 // Get a single material by ID
@@ -357,6 +533,7 @@ module.exports = {
   createMaterial,
   getMyMaterials,
   getAvailableMaterials,
+  getNearbyMaterials,
   getMaterialById,
   updateMaterialStatus,
   deleteMaterial,
