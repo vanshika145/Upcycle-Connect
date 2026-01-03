@@ -2,6 +2,9 @@ const express = require('express');
 const cors = require('cors');
 const authRoutes = require('./routes/authRoutes');
 const materialRoutes = require('./routes/materialRoutes');
+const requestRoutes = require('./routes/requestRoutes');
+const paymentRoutes = require('./routes/paymentRoutes');
+const impactRoutes = require('./routes/impactRoutes');
 
 const app = express();
 
@@ -13,6 +16,9 @@ app.use(express.urlencoded({ extended: true }));
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/materials', materialRoutes);
+app.use('/api/requests', requestRoutes);
+app.use('/api/payments', paymentRoutes);
+app.use('/api/impact', impactRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

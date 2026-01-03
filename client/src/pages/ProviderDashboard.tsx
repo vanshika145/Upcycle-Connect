@@ -11,7 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AnimatedCounter } from "@/components/AnimatedCounter";
 import { useAuth } from "@/contexts/AuthContext";
-import { materialAPI, Material, CreateMaterialData } from "@/lib/api";
+import { useSocket } from "@/contexts/SocketContext";
+import { materialAPI, Material, CreateMaterialData, requestAPI, MaterialRequest, impactAPI } from "@/lib/api";
 import { toast } from "sonner";
 import { LocationMap } from "@/components/LocationMap";
 
@@ -23,16 +24,85 @@ const navItems = [
   { icon: Settings, label: "Settings", id: "settings" },
 ];
 
-const mockRequests = [
-  { id: 1, material: "Copper Wire Scraps", requester: "Tech Innovation Lab", status: "pending", date: "2h ago" },
-  { id: 2, material: "Lab Glass Equipment", requester: "Chemistry Dept.", status: "approved", date: "1d ago" },
-  { id: 3, material: "Lab Glass Equipment", requester: "BioTech Startup", status: "pending", date: "3d ago" },
-];
-
 const categories = ["Chemicals", "Glassware", "Electronics", "Metals", "Plastics", "Other"];
+
+// Impact Summary Header Component
+const ImpactSummaryHeader = () => {
+  const { user } = useAuth();
+  const [impactData, setImpactData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchImpact = async () => {
+      try {
+        const data = await impactAPI.getProviderSummary();
+        setImpactData(data);
+      } catch (error: any) {
+        console.error("Error fetching impact data:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    if (user) {
+      fetchImpact();
+    }
+  }, [user]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8"
+    >
+      {[
+        { 
+          icon: TrendingUp, 
+          label: "Waste Diverted", 
+          value: loading ? 0 : Math.round(impactData?.totalWasteDiverted || 0), 
+          suffix: " kg", 
+          color: "text-eco-green" 
+        },
+        { 
+          icon: Leaf, 
+          label: "CO₂ Saved", 
+          value: loading ? 0 : Math.round(impactData?.totalCO2Saved || 0), 
+          suffix: " kg", 
+          color: "text-eco-teal" 
+        },
+        { 
+          icon: Users, 
+          label: "People Helped", 
+          value: loading ? 0 : (impactData?.peopleHelped || 0), 
+          suffix: "", 
+          color: "text-eco-blue" 
+        },
+      ].map((stat) => (
+        <div
+          key={stat.label}
+          className="glass-card rounded-2xl p-6 flex items-center gap-4"
+        >
+          <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
+            <stat.icon className={`w-6 h-6 ${stat.color}`} />
+          </div>
+          <div>
+            <p className="text-sm text-muted-foreground">{stat.label}</p>
+            <p className="font-display font-bold text-2xl">
+              {loading ? (
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              ) : (
+                <AnimatedCounter end={stat.value} suffix={stat.suffix} duration={1.5} />
+              )}
+            </p>
+          </div>
+        </div>
+      ))}
+    </motion.div>
+  );
+};
 
 const ProviderDashboard = () => {
   const { user, logout, loading: authLoading } = useAuth();
+  const { socket } = useSocket();
   const [activeTab, setActiveTab] = useState("listings");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -44,6 +114,8 @@ const ProviderDashboard = () => {
     category: "",
     description: "",
     quantity: "",
+    price: 0,
+    priceUnit: "per_unit",
     images: [],
     latitude: 0,
     longitude: 0,
@@ -56,6 +128,8 @@ const ProviderDashboard = () => {
   const [locationDetected, setLocationDetected] = useState(false);
   const [selectedImages, setSelectedImages] = useState<File[]>([]);
   const [imagePreview, setImagePreview] = useState<string[]>([]);
+  const [requests, setRequests] = useState<MaterialRequest[]>([]);
+  const [requestsLoading, setRequestsLoading] = useState(false);
 
   // Get user's initial from name
   const getUserInitial = () => {
@@ -74,12 +148,51 @@ const ProviderDashboard = () => {
     return { latitude, longitude };
   };
 
+  // Helper function to format time ago
+  const getTimeAgo = (date: Date): string => {
+    const now = new Date();
+    const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+    
+    if (diffInSeconds < 60) return `${diffInSeconds}s ago`;
+    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
+    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
+    if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d ago`;
+    return date.toLocaleDateString();
+  };
+
   // Fetch materials on component mount and when activeTab changes
   useEffect(() => {
     if (activeTab === "listings" && user) {
       fetchMaterials();
     }
   }, [activeTab, user]);
+
+  // Fetch requests when requests tab is active
+  useEffect(() => {
+    if (activeTab === "requests" && user) {
+      fetchRequests();
+    }
+  }, [activeTab, user]);
+
+  // Listen for real-time request notifications via Socket.IO
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleRequestSent = () => {
+      console.log('📩 New request received via Socket.IO');
+      // Refresh requests if we're on the requests tab
+      if (activeTab === "requests") {
+        fetchRequests();
+      }
+      // Show a badge or indicator that there's a new request
+    };
+
+    socket.on('requestSent', handleRequestSent);
+
+    return () => {
+      socket.off('requestSent', handleRequestSent);
+    };
+  }, [socket, activeTab]);
 
   // Get user location on mount (auto mode)
   useEffect(() => {
@@ -181,6 +294,60 @@ const ProviderDashboard = () => {
       toast.error(error.message || "Failed to fetch materials");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchRequests = async () => {
+    try {
+      setRequestsLoading(true);
+      const response = await requestAPI.getProviderRequests();
+      setRequests(response.requests);
+      console.log(`✅ Fetched ${response.requests.length} requests for provider`);
+    } catch (error: any) {
+      console.error("Error fetching requests:", error);
+      toast.error(error.message || "Failed to fetch requests");
+    } finally {
+      setRequestsLoading(false);
+    }
+  };
+
+  const handleApproveRequest = async (requestId: string) => {
+    try {
+      await requestAPI.updateStatus(requestId, 'approved');
+      toast.success("Request approved successfully!");
+      // Refresh requests list
+      fetchRequests();
+      // Refresh materials to update status
+      fetchMaterials();
+    } catch (error: any) {
+      console.error("Error approving request:", error);
+      toast.error(error.message || "Failed to approve request");
+    }
+  };
+
+  const handleRejectRequest = async (requestId: string) => {
+    try {
+      await requestAPI.updateStatus(requestId, 'rejected');
+      toast.success("Request rejected");
+      // Refresh requests list
+      fetchRequests();
+      // Refresh materials to update status
+      fetchMaterials();
+    } catch (error: any) {
+      console.error("Error rejecting request:", error);
+      toast.error(error.message || "Failed to reject request");
+    }
+  };
+
+  const handleDispatchOrder = async (requestId: string) => {
+    try {
+      await requestAPI.dispatchOrder(requestId);
+      toast.success("Order dispatched successfully!");
+      // Refresh requests list
+      fetchRequests();
+    } catch (error: any) {
+      console.error("Error dispatching order:", error);
+      toast.error(error.message || "Failed to dispatch order");
     }
   };
 
@@ -446,35 +613,11 @@ const ProviderDashboard = () => {
 
         {/* Content Area */}
         <main className="flex-1 p-6 overflow-auto">
-          <AnimatePresence mode="wait">
-            {/* Impact Summary Header */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8"
-            >
-              {[
-                { icon: TrendingUp, label: "Waste Diverted", value: 1250, suffix: " kg", color: "text-eco-green" },
-                { icon: Leaf, label: "CO₂ Saved", value: 340, suffix: " kg", color: "text-eco-teal" },
-                { icon: Users, label: "People Helped", value: 28, suffix: "", color: "text-eco-blue" },
-              ].map((stat) => (
-                <div
-                  key={stat.label}
-                  className="glass-card rounded-2xl p-6 flex items-center gap-4"
-                >
-                  <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
-                    <stat.icon className={`w-6 h-6 ${stat.color}`} />
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">{stat.label}</p>
-                    <p className="font-display font-bold text-2xl">
-                      <AnimatedCounter end={stat.value} suffix={stat.suffix} duration={1.5} />
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </motion.div>
+          {/* Impact Summary Header - Always visible, outside AnimatePresence */}
+          <ImpactSummaryHeader />
 
+          {/* Tab Content - Wrapped in AnimatePresence with mode="wait" */}
+          <AnimatePresence mode="wait">
             {activeTab === "add" && (
               <motion.div
                 key="add"
@@ -544,6 +687,41 @@ const ProviderDashboard = () => {
                         required
                         disabled={submitting}
                       />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="price">Price (₹) *</Label>
+                        <Input 
+                          id="price"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          placeholder="0.00" 
+                          className="h-12"
+                          value={formData.price}
+                          onChange={(e) => setFormData({ ...formData, price: parseFloat(e.target.value) || 0 })}
+                          required
+                          disabled={submitting}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="priceUnit">Price Unit *</Label>
+                        <select
+                          id="priceUnit"
+                          className="flex h-12 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                          value={formData.priceUnit}
+                          onChange={(e) => setFormData({ ...formData, priceUnit: e.target.value as any })}
+                          required
+                          disabled={submitting}
+                        >
+                          <option value="per_unit">Per Unit</option>
+                          <option value="per_kg">Per Kg</option>
+                          <option value="per_box">Per Box</option>
+                          <option value="per_set">Per Set</option>
+                          <option value="total">Total</option>
+                        </select>
+                      </div>
                     </div>
 
                     {/* Image Upload */}
@@ -905,43 +1083,124 @@ const ProviderDashboard = () => {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
               >
-                <div className="space-y-4">
-                  {mockRequests.map((request, index) => (
-                    <motion.div
-                      key={request.id}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: index * 0.1 }}
-                      className="glass-card rounded-2xl p-6"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h3 className="font-semibold">{request.material}</h3>
-                          <p className="text-sm text-muted-foreground">
-                            Requested by <span className="text-foreground">{request.requester}</span>
-                          </p>
-                          <p className="text-xs text-muted-foreground mt-1">{request.date}</p>
-                        </div>
-                        {request.status === "pending" ? (
-                          <div className="flex gap-2">
-                            <Button variant="hero" size="sm">
-                              <CheckCircle className="w-4 h-4 mr-1" />
-                              Approve
-                            </Button>
-                            <Button variant="outline" size="sm">
-                              <XCircle className="w-4 h-4 mr-1" />
-                              Reject
-                            </Button>
+                {requestsLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                  </div>
+                ) : requests.length === 0 ? (
+                  <div className="text-center py-12">
+                    <ClipboardList className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+                    <p className="text-muted-foreground mb-4">No requests yet</p>
+                    <p className="text-xs text-muted-foreground">
+                      Requests from seekers will appear here
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {requests.map((request, index) => {
+                      const timeAgo = getTimeAgo(new Date(request.createdAt));
+                      
+                      return (
+                        <motion.div
+                          key={request.id}
+                          initial={{ opacity: 0, x: -20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: index * 0.1 }}
+                          className="glass-card rounded-2xl p-6"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <h3 className="font-semibold text-lg">{request.material?.title || "Material"}</h3>
+                              <p className="text-sm text-muted-foreground mt-1">
+                                Requested by <span className="text-foreground font-medium">
+                                  {request.seeker?.name || "Seeker"}
+                                </span>
+                                {request.seeker?.college && (
+                                  <span className="text-muted-foreground"> • {request.seeker.college}</span>
+                                )}
+                              </p>
+                              {request.message && (
+                                <p className="text-sm text-muted-foreground mt-2 italic">
+                                  "{request.message}"
+                                </p>
+                              )}
+                              <div className="mt-2 space-y-1">
+                                <p className="text-sm">
+                                  <span className="text-muted-foreground">Quantity Requested:</span>{" "}
+                                  <span className="font-medium">{request.quantity}</span>
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {timeAgo} • Category: {request.material?.category}
+                                </p>
+                                {/* Order Status */}
+                                {request.orderStatus && request.orderStatus !== "pending" && (
+                                  <div className="flex items-center gap-2 mt-2">
+                                    <span className="text-xs text-muted-foreground">Order Status:</span>
+                                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                                      request.orderStatus === "paid" ? "bg-blue-500/10 text-blue-600" :
+                                      request.orderStatus === "dispatched" ? "bg-purple-500/10 text-purple-600" :
+                                      request.orderStatus === "received" ? "bg-eco-green/10 text-eco-green" :
+                                      "bg-muted text-muted-foreground"
+                                    }`}>
+                                      {request.orderStatus.charAt(0).toUpperCase() + request.orderStatus.slice(1)}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3 ml-4">
+                              {request.status === "pending" ? (
+                                <div className="flex gap-2">
+                                  <Button 
+                                    variant="hero" 
+                                    size="sm"
+                                    onClick={() => handleApproveRequest(request.id)}
+                                  >
+                                    <CheckCircle className="w-4 h-4 mr-1" />
+                                    Approve
+                                  </Button>
+                                  <Button 
+                                    variant="outline" 
+                                    size="sm"
+                                    onClick={() => handleRejectRequest(request.id)}
+                                  >
+                                    <XCircle className="w-4 h-4 mr-1" />
+                                    Reject
+                                  </Button>
+                                </div>
+                              ) : request.orderStatus === "paid" ? (
+                                <Button 
+                                  variant="hero" 
+                                  size="sm"
+                                  onClick={() => handleDispatchOrder(request.id)}
+                                >
+                                  <Package className="w-4 h-4 mr-1" />
+                                  Dispatch Order
+                                </Button>
+                              ) : request.orderStatus === "dispatched" ? (
+                                <span className="px-3 py-1 rounded-full text-xs font-medium bg-purple-500/10 text-purple-600">
+                                  Dispatched
+                                </span>
+                              ) : request.orderStatus === "received" ? (
+                                <span className="px-3 py-1 rounded-full text-xs font-medium bg-eco-green/10 text-eco-green">
+                                  Order Received
+                                </span>
+                              ) : request.status === "approved" ? (
+                                <span className="px-3 py-1 rounded-full text-xs font-medium bg-blue-500/10 text-blue-600">
+                                  Waiting for Payment
+                                </span>
+                              ) : (
+                                <span className="px-3 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground">
+                                  Rejected
+                                </span>
+                              )}
+                            </div>
                           </div>
-                        ) : (
-                          <span className="px-3 py-1 rounded-full text-xs font-medium bg-eco-green/10 text-eco-green">
-                            Approved
-                          </span>
-                        )}
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+                )}
               </motion.div>
             )}
 

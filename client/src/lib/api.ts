@@ -48,19 +48,37 @@ const getAuthToken = (): string | null => {
 };
 
 // Get fresh Firebase ID token
-const getFreshToken = async (): Promise<string | null> => {
+export const getFreshToken = async (): Promise<string | null> => {
   try {
-    const currentUser = auth.currentUser;
+    // Wait for auth to be ready if currentUser is null
+    let currentUser = auth.currentUser;
+    
+    if (!currentUser) {
+      // Wait a bit for auth state to sync
+      await new Promise(resolve => setTimeout(resolve, 100));
+      currentUser = auth.currentUser;
+    }
+    
     if (currentUser) {
       // Get fresh token (Firebase automatically refreshes if needed)
       const token = await currentUser.getIdToken(true); // Force refresh
       setAuthToken(token);
       return token;
     }
+    
+    // If still no user, check localStorage for cached token
+    const cachedToken = getAuthToken();
+    if (cachedToken) {
+      console.warn('⚠️ Using cached token - Firebase user not available');
+      return cachedToken;
+    }
+    
     return null;
   } catch (error) {
     console.error('Error getting fresh token:', error);
-    return null;
+    // Fallback to cached token
+    const cachedToken = getAuthToken();
+    return cachedToken;
   }
 };
 
@@ -162,6 +180,8 @@ export interface Material {
   category: string;
   description: string;
   quantity: string;
+  price: number;
+  priceUnit: 'per_unit' | 'per_kg' | 'per_box' | 'per_set' | 'total';
   images: MaterialImage[];
   providerId: string;
   provider?: {
@@ -175,6 +195,7 @@ export interface Material {
   };
   status: 'available' | 'requested' | 'picked';
   createdAt: string;
+  distance?: number; // Distance in kilometers (from getNearby API)
 }
 
 export interface CreateMaterialData {
@@ -182,6 +203,8 @@ export interface CreateMaterialData {
   category: string;
   description?: string;
   quantity: string;
+  price: number;
+  priceUnit: 'per_unit' | 'per_kg' | 'per_box' | 'per_set' | 'total';
   images?: File[]; // Changed to File[] for upload
   latitude: number;
   longitude: number;
@@ -204,6 +227,8 @@ export const materialAPI = {
       formData.append('description', data.description);
     }
     formData.append('quantity', data.quantity);
+    formData.append('price', data.price.toString());
+    formData.append('priceUnit', data.priceUnit);
     formData.append('latitude', data.latitude.toString());
     formData.append('longitude', data.longitude.toString());
 
@@ -307,6 +332,305 @@ export const materialAPI = {
     return apiRequest<{ materials: Material[]; count: number; searchLocation: { latitude: number; longitude: number; radius: number } }>(url, {
       method: 'GET',
     }, false); // Public endpoint, no auth required
+  },
+};
+
+// Request interfaces
+export interface MaterialRequest {
+  id: string;
+  material: {
+    id: string;
+    title: string;
+    category: string;
+    quantity: string;
+    price?: number;
+    priceUnit?: 'per_unit' | 'per_kg' | 'per_box' | 'per_set' | 'total';
+    images?: MaterialImage[];
+    location?: {
+      type: 'Point';
+      coordinates: [number, number];
+    };
+    status: string;
+  };
+  seeker?: {
+    id: string;
+    name: string;
+    email: string;
+    college?: string;
+    location?: {
+      type: 'Point';
+      coordinates: [number, number];
+    };
+  };
+  provider?: {
+    id: string;
+    name: string;
+    email: string;
+    organization?: string;
+    location?: {
+      type: 'Point';
+      coordinates: [number, number];
+    };
+  };
+  quantity: string; // Requested quantity
+  message?: string;
+  status: 'pending' | 'approved' | 'rejected';
+  orderStatus: 'pending' | 'approved' | 'paid' | 'dispatched' | 'received';
+  paymentStatus: 'pending' | 'paid' | 'failed';
+  paymentId?: string;
+  invoiceNumber?: string;
+  invoiceUrl?: string;
+  approvedAt?: string;
+  paidAt?: string;
+  dispatchedAt?: string;
+  receivedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateRequestData {
+  materialId: string;
+  quantity: string;
+  message?: string;
+}
+
+// Request API functions
+export const requestAPI = {
+  // Create a new request (Seeker sends request to Provider)
+  create: async (data: CreateRequestData): Promise<{ message: string; request: MaterialRequest }> => {
+    return apiRequest<{ message: string; request: MaterialRequest }>('/api/requests', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }, true);
+  },
+
+  // Get all requests for a provider (incoming requests)
+  getProviderRequests: async (): Promise<{ requests: MaterialRequest[] }> => {
+    return apiRequest<{ requests: MaterialRequest[] }>('/api/requests/provider', {
+      method: 'GET',
+    }, true);
+  },
+
+  // Get all requests for a seeker (outgoing requests)
+  getSeekerRequests: async (): Promise<{ requests: MaterialRequest[] }> => {
+    return apiRequest<{ requests: MaterialRequest[] }>('/api/requests/seeker', {
+      method: 'GET',
+    }, true);
+  },
+
+  // Update request status (approve or reject)
+  updateStatus: async (
+    requestId: string,
+    status: 'approved' | 'rejected'
+  ): Promise<{ message: string; request: MaterialRequest }> => {
+    return apiRequest<{ message: string; request: MaterialRequest }>(`/api/requests/${requestId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }, true);
+  },
+
+  // Create Razorpay order
+  createPaymentOrder: async (
+    requestId: string
+  ): Promise<{ message: string; order: { id: string; amount: number; currency: string; receipt: string }; keyId: string }> => {
+    return apiRequest<{ message: string; order: { id: string; amount: number; currency: string; receipt: string }; keyId: string }>(
+      '/api/payments/create-order',
+      {
+        method: 'POST',
+        body: JSON.stringify({ requestId }),
+      },
+      true
+    );
+  },
+
+  // Verify Razorpay payment
+  verifyPayment: async (
+    requestId: string,
+    razorpay_order_id: string,
+    razorpay_payment_id: string,
+    razorpay_signature: string
+  ): Promise<{ message: string; request: { id: string; orderStatus: string; paymentStatus: string; paymentId: string } }> => {
+    return apiRequest<{ message: string; request: { id: string; orderStatus: string; paymentStatus: string; paymentId: string } }>(
+      '/api/payments/verify',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          requestId,
+          razorpay_order_id,
+          razorpay_payment_id,
+          razorpay_signature,
+        }),
+      },
+      true
+    );
+  },
+
+  // Dispatch order (provider dispatches after payment)
+  dispatchOrder: async (
+    requestId: string
+  ): Promise<{ message: string; request: { id: string; orderStatus: string; dispatchedAt: string; invoiceNumber: string } }> => {
+    return apiRequest<{ message: string; request: { id: string; orderStatus: string; dispatchedAt: string; invoiceNumber: string } }>(
+      `/api/requests/${requestId}/dispatch`,
+      {
+        method: 'POST',
+      },
+      true
+    );
+  },
+
+  // Mark order as received (seeker confirms receipt)
+  receiveOrder: async (
+    requestId: string
+  ): Promise<{ message: string; request: { id: string; orderStatus: string; receivedAt: string } }> => {
+    return apiRequest<{ message: string; request: { id: string; orderStatus: string; receivedAt: string } }>(
+      `/api/requests/${requestId}/receive`,
+      {
+        method: 'POST',
+      },
+      true
+    );
+  },
+
+  // Generate and download invoice (returns PDF blob)
+  getInvoice: async (
+    requestId: string
+  ): Promise<Blob> => {
+    const token = await getFreshToken();
+    if (!token) {
+      throw new Error('Authentication required');
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/requests/${requestId}/invoice`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'An error occurred' }));
+      throw new Error(error.message || `HTTP error! status: ${response.status}`);
+    }
+
+    return response.blob();
+  },
+};
+
+// Impact Analytics API
+export const impactAPI = {
+  // Get seeker impact summary
+  getSeekerSummary: async (): Promise<{
+    totalMaterialsReused: number;
+    totalCO2Saved: number;
+    totalMoneySaved: number;
+    categoryWiseBreakdown: Array<{
+      category: string;
+      materialsReused: number;
+      co2Saved: number;
+      moneySaved: number;
+      wasteDiverted: number;
+      quantityReused: number;
+    }>;
+    categoryDistribution: Array<{
+      category: string;
+      percentage: number;
+      wasteDiverted: number;
+    }>;
+  }> => {
+    return apiRequest<{
+      totalMaterialsReused: number;
+      totalCO2Saved: number;
+      totalMoneySaved: number;
+      categoryWiseBreakdown: Array<{
+        category: string;
+        materialsReused: number;
+        co2Saved: number;
+        moneySaved: number;
+        wasteDiverted: number;
+        quantityReused: number;
+      }>;
+      categoryDistribution: Array<{
+        category: string;
+        percentage: number;
+        wasteDiverted: number;
+      }>;
+    }>(
+      '/api/impact/seeker/summary',
+      {
+        method: 'GET',
+      },
+      true
+    );
+  },
+
+  // Get provider impact summary
+  getProviderSummary: async (): Promise<{
+    totalWasteDiverted: number;
+    totalCO2Saved: number;
+    peopleHelped: number;
+    categoryWiseWaste: Array<{
+      category: string;
+      wasteDiverted: number;
+      materialsCount: number;
+    }>;
+    categoryWiseCO2: Array<{
+      category: string;
+      co2Saved: number;
+    }>;
+  }> => {
+    return apiRequest<{
+      totalWasteDiverted: number;
+      totalCO2Saved: number;
+      peopleHelped: number;
+      categoryWiseWaste: Array<{
+        category: string;
+        wasteDiverted: number;
+        materialsCount: number;
+      }>;
+      categoryWiseCO2: Array<{
+        category: string;
+        co2Saved: number;
+      }>;
+    }>(
+      '/api/impact/provider/summary',
+      {
+        method: 'GET',
+      },
+      true
+    );
+  },
+
+  // Get provider CO₂ trend over time
+  getProviderCO2Trend: async (): Promise<{
+    trend: Array<{
+      year: number;
+      month: number;
+      monthName: string;
+      label: string;
+      co2Saved: number;
+      wasteDiverted: number;
+      materialsCount: number;
+    }>;
+    totalCO2Saved: number;
+  }> => {
+    return apiRequest<{
+      trend: Array<{
+        year: number;
+        month: number;
+        monthName: string;
+        label: string;
+        co2Saved: number;
+        wasteDiverted: number;
+        materialsCount: number;
+      }>;
+      totalCO2Saved: number;
+    }>(
+      '/api/impact/provider/co2-trend',
+      {
+        method: 'GET',
+      },
+      true
+    );
   },
 };
 

@@ -8,11 +8,17 @@ const createMaterial = async (req, res) => {
 
   try {
     // Get form data from req.body (text fields)
-    const { title, category, description, quantity, latitude, longitude } = req.body;
+    const { title, category, description, quantity, price, priceUnit, latitude, longitude } = req.body;
 
     // Validate required fields
     if (!title || !category || !quantity || !latitude || !longitude) {
       return res.status(400).json({ message: 'Missing required fields' });
+    }
+
+    // Validate price
+    const materialPrice = parseFloat(price);
+    if (isNaN(materialPrice) || materialPrice < 0) {
+      return res.status(400).json({ message: 'Invalid price. Price must be a positive number.' });
     }
 
     // Parse and validate latitude and longitude
@@ -87,6 +93,8 @@ const createMaterial = async (req, res) => {
       category,
       description: description ? description.trim() : '',
       quantity: quantity.trim(),
+      price: materialPrice,
+      priceUnit: priceUnit || 'per_unit',
       images: imageData,
       providerId: user._id, // MongoDB ObjectId
       location: {
@@ -104,6 +112,18 @@ const createMaterial = async (req, res) => {
 
     console.log(`✅ Material created in MongoDB: ${material.title} by ${user.email}`);
 
+    // Emit Socket.IO event to matched seekers (after DB save success)
+    try {
+      const socketIO = req.app.get('socketIO');
+      if (socketIO && socketIO.notifyMatchedSeekers) {
+        // Notify seekers within 10km radius
+        await socketIO.notifyMatchedSeekers(material, 10);
+      }
+    } catch (socketError) {
+      // Don't fail the request if socket notification fails
+      console.error('⚠️ Failed to notify seekers via Socket.IO:', socketError);
+    }
+
     res.status(201).json({
       message: 'Material created successfully',
       material: {
@@ -112,6 +132,8 @@ const createMaterial = async (req, res) => {
         category: material.category,
         description: material.description,
         quantity: material.quantity,
+        price: material.price,
+        priceUnit: material.priceUnit,
         images: material.images,
         providerId: material.providerId._id,
         provider: {
@@ -171,6 +193,8 @@ const getMyMaterials = async (req, res) => {
         category: material.category,
         description: material.description,
         quantity: material.quantity,
+        price: material.price,
+        priceUnit: material.priceUnit,
         images: material.images,
         providerId: material.providerId._id,
         provider: {
@@ -213,6 +237,8 @@ const getAvailableMaterials = async (req, res) => {
         category: material.category,
         description: material.description,
         quantity: material.quantity,
+        price: material.price,
+        priceUnit: material.priceUnit,
         images: material.images,
         providerId: material.providerId._id,
         provider: {
@@ -334,6 +360,8 @@ const getNearbyMaterials = async (req, res) => {
         category: material.category,
         description: material.description,
         quantity: material.quantity,
+        price: material.price,
+        priceUnit: material.priceUnit,
         images: material.images,
         providerId: material.providerId._id,
         provider: {
@@ -424,6 +452,8 @@ const getMaterialById = async (req, res) => {
         category: material.category,
         description: material.description,
         quantity: material.quantity,
+        price: material.price,
+        priceUnit: material.priceUnit,
         images: material.images,
         providerId: material.providerId._id,
         provider: {

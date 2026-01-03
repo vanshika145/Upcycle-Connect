@@ -20,6 +20,17 @@ const materialSchema = new mongoose.Schema({
     required: true,
     trim: true,
   },
+  price: {
+    type: Number,
+    required: true,
+    min: 0,
+    default: 0,
+  },
+  priceUnit: {
+    type: String,
+    enum: ['per_unit', 'per_kg', 'per_box', 'per_set', 'total'],
+    default: 'per_unit',
+  },
   images: {
     type: [
       {
