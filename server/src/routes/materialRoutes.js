@@ -6,6 +6,7 @@ const {
   getNearbyMaterials,
   getMaterialById,
   updateMaterialStatus,
+  updateMaterial,
   deleteMaterial,
 } = require('../controllers/materialController');
 const authMiddleware = require('../middleware/authMiddleware');
@@ -25,6 +26,7 @@ router.get('/:id', getMaterialById); // Get material by ID
 
 // Protected routes
 router.patch('/:id/status', authMiddleware, updateMaterialStatus);
+router.put('/:id', authMiddleware, handleUpload, updateMaterial);
 router.delete('/:id', authMiddleware, deleteMaterial);
 
 module.exports = router;

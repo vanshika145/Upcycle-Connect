@@ -45,6 +45,8 @@ const register = async (req, res) => {
         organization: user.organization,
         college: user.college,
         location: user.location,
+        averageRating: user.averageRating || 0,
+        totalReviews: user.totalReviews || 0,
         createdAt: user.createdAt,
       },
     });
@@ -92,6 +94,8 @@ const login = async (req, res) => {
         organization: user.organization,
         college: user.college,
         location: user.location,
+        averageRating: user.averageRating || 0,
+        totalReviews: user.totalReviews || 0,
         createdAt: user.createdAt,
       },
     });
@@ -144,6 +148,8 @@ const googleSignIn = async (req, res) => {
         organization: user.organization,
         college: user.college,
         location: user.location,
+        averageRating: user.averageRating || 0,
+        totalReviews: user.totalReviews || 0,
         createdAt: user.createdAt,
       },
     });
@@ -183,6 +189,8 @@ const getMe = async (req, res) => {
         organization: user.organization,
         college: user.college,
         location: user.location,
+        averageRating: user.averageRating || 0,
+        totalReviews: user.totalReviews || 0,
         createdAt: user.createdAt,
       },
     });

@@ -75,7 +75,7 @@ const SeekerDashboard = () => {
   const [showTrustedOnly, setShowTrustedOnly] = useState(false);
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
   const [selectedExchangeForReview, setSelectedExchangeForReview] = useState<any | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [distanceRadius, setDistanceRadius] = useState<number>(10); // Default 10km
 
   // Get user's initial from name
   const getUserInitial = () => {
@@ -134,10 +134,10 @@ const SeekerDashboard = () => {
         response = await materialAPI.getNearby(
           userLocation.latitude,
           userLocation.longitude,
-          10, // 10km radius
+          distanceRadius, // Use selected radius
           selectedCategory === "All" ? undefined : selectedCategory
         );
-        console.log(`✅ Fetched ${response.materials.length} nearby materials for seeker`);
+        console.log(`✅ Fetched ${response.materials.length} nearby materials for seeker (${distanceRadius}km radius)`);
       } else {
         response = await materialAPI.getAvailable(
           selectedCategory === "All" ? undefined : selectedCategory,
@@ -155,7 +155,7 @@ const SeekerDashboard = () => {
     } finally {
       setLoading(false);
     }
-  }, [userLocation, selectedCategory]);
+  }, [userLocation, selectedCategory, distanceRadius]);
 
   const fetchRequests = useCallback(async () => {
     try {
@@ -276,14 +276,47 @@ const SeekerDashboard = () => {
       }
     };
 
+    // Listen for real-time material updates
+    const handleMaterialUpdated = (updatedMaterial: Material) => {
+      console.log('📦 Material updated notification received:', updatedMaterial);
+      // Update material in the list if it exists
+      setMaterials((prevMaterials) => {
+        const index = prevMaterials.findIndex((m) => m.id === updatedMaterial.id);
+        if (index !== -1) {
+          // Replace the material with updated version
+          const newMaterials = [...prevMaterials];
+          newMaterials[index] = updatedMaterial;
+          return newMaterials;
+        }
+        // If material doesn't exist and is available, add it
+        if (updatedMaterial.status === 'available' && activeTab === "browse") {
+          return [...prevMaterials, updatedMaterial];
+        }
+        return prevMaterials;
+      });
+    };
+
+    // Listen for real-time material deletions
+    const handleMaterialDeleted = (data: { materialId: string }) => {
+      console.log('🗑️ Material deleted notification received:', data.materialId);
+      // Remove material from the list
+      setMaterials((prevMaterials) => 
+        prevMaterials.filter((m) => m.id !== data.materialId)
+      );
+    };
+
     socket.on('requestApproved', handleRequestApproved);
     socket.on('requestRejected', handleRequestRejected);
     socket.on('materialReused', handleMaterialReused);
+    socket.on('materialUpdated', handleMaterialUpdated);
+    socket.on('materialDeleted', handleMaterialDeleted);
 
     return () => {
       socket.off('requestApproved', handleRequestApproved);
       socket.off('requestRejected', handleRequestRejected);
       socket.off('materialReused', handleMaterialReused);
+      socket.off('materialUpdated', handleMaterialUpdated);
+      socket.off('materialDeleted', handleMaterialDeleted);
     };
   }, [socket, activeTab, fetchRequests, fetchMaterials, userLocation, fetchImpactData, fetchAnalyticsData]);
 
@@ -480,42 +513,32 @@ const SeekerDashboard = () => {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
               >
-                {/* Search Bar */}
+                {/* AI Search Bar */}
                 <div className="mb-6">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
-                    <Input
-                      placeholder="Search materials by name, category, or description..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="pl-10 h-12 text-base"
-                    />
-                  </div>
+                  <AISearchBar
+                    userLocation={userLocation}
+                    onMaterialClick={(material) => {
+                      setSelectedMaterial(material);
+                      setIsRequestModalOpen(true);
+                    }}
+                  />
                 </div>
 
-                {/* AI Search Bar */}
-                <AISearchBar
-                  userLocation={userLocation}
-                  onMaterialClick={(material) => {
-                    setSelectedMaterial(material);
-                    setIsRequestModalOpen(true);
-                  }}
-                />
-
                 {/* Filters */}
-                <div className="flex flex-wrap items-center gap-4 mb-6 mt-6">
+                <div className="flex flex-wrap items-center gap-4 mb-6">
                   <div className="flex gap-2 flex-wrap">
                     {categories.map((cat) => (
                       <button
                         key={cat}
+                        type="button"
                         onClick={() => {
                           setSelectedCategory(cat);
                           // Materials will refresh automatically via useEffect
                         }}
                         className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
                           selectedCategory === cat
-                            ? "gradient-primary text-white"
-                            : "bg-muted text-muted-foreground hover:bg-muted/80"
+                            ? "gradient-primary text-white shadow-glow"
+                            : "bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground"
                         }`}
                       >
                         {cat}
@@ -534,14 +557,26 @@ const SeekerDashboard = () => {
                       <Star className="w-4 h-4" />
                       Highly Rated (4+)
                     </button>
-                    <Button variant="outline" size="sm">
-                      <Sliders className="w-4 h-4 mr-2" />
-                      Filters
-                    </Button>
-                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted text-sm">
-                      <MapPin className="w-4 h-4 text-primary" />
-                      <span>Within 5 km</span>
-                    </div>
+                    {userLocation && userLocation.latitude !== 0 && userLocation.longitude !== 0 && (
+                      <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted text-sm">
+                        <MapPin className="w-4 h-4 text-primary" />
+                        <select
+                          value={distanceRadius}
+                          onChange={(e) => {
+                            setDistanceRadius(Number(e.target.value));
+                            // Materials will refresh automatically via useEffect
+                          }}
+                          className="bg-transparent border-none outline-none text-sm font-medium cursor-pointer"
+                        >
+                          <option value={2}>Within 2 km</option>
+                          <option value={5}>Within 5 km</option>
+                          <option value={10}>Within 10 km</option>
+                          <option value={25}>Within 25 km</option>
+                          <option value={50}>Within 50 km</option>
+                          <option value={100}>Within 100 km</option>
+                        </select>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -564,15 +599,9 @@ const SeekerDashboard = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {materials
                       .filter((material) => {
-                        // Filter by search query
-                        if (searchQuery.trim()) {
-                          const query = searchQuery.toLowerCase();
-                          const matchesTitle = material.title?.toLowerCase().includes(query);
-                          const matchesCategory = material.category?.toLowerCase().includes(query);
-                          const matchesDescription = material.description?.toLowerCase().includes(query);
-                          if (!matchesTitle && !matchesCategory && !matchesDescription) {
-                            return false;
-                          }
+                        // Filter by category (selectedCategory is already applied in fetchMaterials, but apply here too for consistency)
+                        if (selectedCategory !== "All" && material.category !== selectedCategory) {
+                          return false;
                         }
                         // Filter by trusted providers if enabled
                         if (showTrustedOnly) {

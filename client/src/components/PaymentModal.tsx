@@ -23,6 +23,8 @@ export const PaymentModal = ({ request, isOpen, onClose, onPaymentComplete }: Pa
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [razorpayLoaded, setRazorpayLoaded] = useState(false);
+  const [fetchedAmount, setFetchedAmount] = useState<number | null>(null); // Amount in paise
+  const [amountLoading, setAmountLoading] = useState(false);
 
   // Load Razorpay checkout script
   useEffect(() => {
@@ -47,6 +49,31 @@ export const PaymentModal = ({ request, isOpen, onClose, onPaymentComplete }: Pa
       };
     }
   }, [isOpen, razorpayLoaded]);
+
+  // Fetch payment amount from backend when modal opens
+  useEffect(() => {
+    const fetchAmount = async () => {
+      if (isOpen && request) {
+        setAmountLoading(true);
+        try {
+          const orderResponse = await requestAPI.createPaymentOrder(request.id);
+          setFetchedAmount(orderResponse.order.amount); // amount in paise
+        } catch (error: any) {
+          setFetchedAmount(null);
+          // Only show error if not already paid or not approved
+          if (error?.message && !error.message.includes('Payment already completed')) {
+            toast.error(error.message || 'Failed to fetch payment amount');
+          }
+        } finally {
+          setAmountLoading(false);
+        }
+      } else {
+        setFetchedAmount(null);
+      }
+    };
+    fetchAmount();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, request]);
 
   const handlePayment = async () => {
     if (!request) return;
@@ -197,30 +224,48 @@ export const PaymentModal = ({ request, isOpen, onClose, onPaymentComplete }: Pa
                       <span className="font-medium">{request.quantity}</span>
                     </div>
                     {(() => {
-                      // Calculate total based on price and quantity
-                      // Price is stored in rupees (not paise) in the database
+                      // Use fetched amount from backend (in paise) if available, otherwise calculate locally
+                      let totalInRupees = 0;
+                      let isLoadingAmount = amountLoading;
+                      
+                      if (fetchedAmount !== null && fetchedAmount !== undefined) {
+                        // Convert from paise to rupees
+                        totalInRupees = fetchedAmount / 100;
+                        // If backend returns minimal amount (1 paise = ₹0.01) for free materials, treat as free
+                        if (totalInRupees < 0.01) {
+                          totalInRupees = 0;
+                        }
+                      } else {
+                        // Fallback: Calculate total based on price and quantity from request data
+                        // Price is stored in rupees (not paise) in the database
+                        const materialPrice = request.material?.price ?? 0;
+                        const priceUnit = request.material?.priceUnit || 'total';
+                        const quantityStr = request.quantity || '1';
+                        const quantityMatch = quantityStr.match(/(\d+(?:\.\d+)?)/);
+                        const requestedQty = quantityMatch ? parseFloat(quantityMatch[1]) : 1;
+                        
+                        // Ensure materialPrice is a valid number
+                        const validPrice = typeof materialPrice === 'number' && !isNaN(materialPrice) && materialPrice >= 0 
+                          ? materialPrice 
+                          : 0;
+                        
+                        if (priceUnit === 'total') {
+                          totalInRupees = validPrice;
+                        } else {
+                          totalInRupees = validPrice * requestedQty;
+                        }
+                        
+                        // Ensure total is a valid number
+                        if (isNaN(totalInRupees) || totalInRupees < 0) {
+                          totalInRupees = 0;
+                        }
+                      }
+                      
                       const materialPrice = request.material?.price ?? 0;
                       const priceUnit = request.material?.priceUnit || 'total';
-                      const quantityStr = request.quantity || '1';
-                      const quantityMatch = quantityStr.match(/(\d+(?:\.\d+)?)/);
-                      const requestedQty = quantityMatch ? parseFloat(quantityMatch[1]) : 1;
-                      
-                      // Ensure materialPrice is a valid number
                       const validPrice = typeof materialPrice === 'number' && !isNaN(materialPrice) && materialPrice >= 0 
                         ? materialPrice 
                         : 0;
-                      
-                      let total = 0;
-                      if (priceUnit === 'total') {
-                        total = validPrice;
-                      } else {
-                        total = validPrice * requestedQty;
-                      }
-                      
-                      // Ensure total is a valid number
-                      if (isNaN(total) || total < 0) {
-                        total = 0;
-                      }
                       
                       return (
                         <>
@@ -244,10 +289,16 @@ export const PaymentModal = ({ request, isOpen, onClose, onPaymentComplete }: Pa
                             <div className="flex justify-between">
                               <span className="font-semibold">Total Amount:</span>
                               <span className="font-display font-bold text-lg text-primary">
-                                {total > 0 ? `₹${total.toFixed(2)}` : 'Free'}
+                                {isLoadingAmount ? (
+                                  <span className="text-muted-foreground">Loading...</span>
+                                ) : totalInRupees > 0 ? (
+                                  `₹${totalInRupees.toFixed(2)}`
+                                ) : (
+                                  'Free'
+                                )}
                               </span>
                             </div>
-                            {total === 0 && (
+                            {!isLoadingAmount && totalInRupees === 0 && (
                               <p className="text-xs text-muted-foreground mt-1">
                                 This material is available for free
                               </p>

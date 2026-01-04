@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { 
   Recycle, Plus, Package, ClipboardList, BarChart3, 
   LogOut, Bell, TrendingUp, Leaf, Upload, MapPin,
-  Clock, CheckCircle, XCircle, ChevronRight, Calendar, Users, Loader2
+  Clock, CheckCircle, XCircle, ChevronRight, Calendar, Users, Loader2, Star, Edit, Trash2
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -12,10 +12,11 @@ import { Label } from "@/components/ui/label";
 import { AnimatedCounter } from "@/components/AnimatedCounter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSocket } from "@/contexts/SocketContext";
-import { materialAPI, Material, CreateMaterialData, requestAPI, MaterialRequest, impactAPI, analyticsAPI } from "@/lib/api";
+import { materialAPI, Material, CreateMaterialData, requestAPI, MaterialRequest, impactAPI, analyticsAPI, reviewAPI, ProviderReview } from "@/lib/api";
 import { toast } from "sonner";
 import { LocationMap } from "@/components/LocationMap";
 import NotificationBell from "@/components/NotificationBell";
+import { EditMaterialModal } from "@/components/EditMaterialModal";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -42,6 +43,7 @@ const navItems = [
   { icon: Package, label: "My Listings", id: "listings" },
   { icon: ClipboardList, label: "Requests", id: "requests" },
   { icon: BarChart3, label: "Analytics", id: "analytics" },
+  { icon: Users, label: "Reviews", id: "reviews" },
 ];
 
 const categories = ["Chemicals", "Glassware", "Electronics", "Metals", "Plastics", "Other"];
@@ -121,7 +123,7 @@ const ImpactSummaryHeader = () => {
 };
 
 const ProviderDashboard = () => {
-  const { user, logout, loading: authLoading } = useAuth();
+  const { user, logout, loading: authLoading, refreshUser } = useAuth();
   const { socket } = useSocket();
   const [activeTab, setActiveTab] = useState("listings");
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -152,6 +154,10 @@ const ProviderDashboard = () => {
   const [requestsLoading, setRequestsLoading] = useState(false);
   const [providerMonthly, setProviderMonthly] = useState<any[]>([]);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [reviews, setReviews] = useState<ProviderReview[]>([]);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [editingMaterial, setEditingMaterial] = useState<Material | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   // Get user's initial from name
   const getUserInitial = () => {
@@ -195,6 +201,8 @@ const ProviderDashboard = () => {
       fetchRequests();
     } else if (activeTab === "analytics" && user && user.id) {
       fetchProviderMonthlyData();
+    } else if (activeTab === "reviews" && user && user.id) {
+      fetchReviews();
     }
   }, [activeTab, user]);
 
@@ -212,6 +220,26 @@ const ProviderDashboard = () => {
       toast.error(error.message || "Failed to fetch analytics data");
     } finally {
       setAnalyticsLoading(false);
+    }
+  };
+
+  // Fetch reviews for the provider
+  const fetchReviews = async () => {
+    if (!user?.id) return;
+    
+    try {
+      setReviewsLoading(true);
+      const response = await reviewAPI.getProviderReviews(user.id);
+      setReviews(response.reviews);
+      console.log('✅ Fetched reviews:', response.reviews);
+      
+      // Refresh user data to get updated averageRating and totalReviews
+      await refreshUser();
+    } catch (error: any) {
+      console.error("Error fetching reviews:", error);
+      toast.error(error.message || "Failed to fetch reviews");
+    } finally {
+      setReviewsLoading(false);
     }
   };
 
@@ -237,14 +265,26 @@ const ProviderDashboard = () => {
       }
     };
 
+    // Listen for rating updates
+    const handleRatingUpdated = () => {
+      console.log('⭐ Rating updated notification received');
+      // Refresh user data and reviews if on reviews tab
+      if (activeTab === "reviews") {
+        refreshUser();
+        fetchReviews();
+      }
+    };
+
     socket.on('requestSent', handleRequestSent);
     socket.on('materialReused', handleMaterialReused);
+    socket.on('ratingUpdated', handleRatingUpdated);
 
     return () => {
       socket.off('requestSent', handleRequestSent);
       socket.off('materialReused', handleMaterialReused);
+      socket.off('ratingUpdated', handleRatingUpdated);
     };
-  }, [socket, activeTab, user]);
+  }, [socket, activeTab, user, refreshUser]);
 
   // Get user location on mount (auto mode)
   useEffect(() => {
@@ -401,6 +441,33 @@ const ProviderDashboard = () => {
       console.error("Error dispatching order:", error);
       toast.error(error.message || "Failed to dispatch order");
     }
+  };
+
+  const handleEditMaterial = (material: Material) => {
+    setEditingMaterial(material);
+    setIsEditModalOpen(true);
+  };
+
+  const handleDeleteMaterial = async (materialId: string) => {
+    if (!confirm("Are you sure you want to delete this material? This action cannot be undone.")) {
+      return;
+    }
+
+    try {
+      await materialAPI.delete(materialId);
+      toast.success("Material deleted successfully!");
+      // Refresh materials list
+      fetchMaterials();
+    } catch (error: any) {
+      console.error("Error deleting material:", error);
+      toast.error(error.message || "Failed to delete material");
+    }
+  };
+
+  const handleMaterialUpdated = () => {
+    setIsEditModalOpen(false);
+    setEditingMaterial(null);
+    fetchMaterials();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -1132,7 +1199,30 @@ const ProviderDashboard = () => {
                           <p className="font-bold text-lg">{material.quantity}</p>
                           <p className="text-xs text-muted-foreground">quantity</p>
                         </div>
-                        <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleEditMaterial(material);
+                            }}
+                            className="h-8 w-8 p-0"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteMaterial(material.id);
+                            }}
+                            className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
                       </motion.div>
                     ))}
                   </div>
@@ -1345,6 +1435,116 @@ const ProviderDashboard = () => {
                 )}
               </motion.div>
             )}
+
+            {activeTab === "reviews" && (
+              <motion.div
+                key="reviews"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+              >
+                {reviewsLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                  </div>
+                ) : reviews.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Star className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+                    <p className="text-muted-foreground mb-4">No reviews yet</p>
+                    <p className="text-xs text-muted-foreground">
+                      Reviews from seekers will appear here once they rate your materials
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {/* Rating Summary */}
+                    <div className="glass-card rounded-2xl p-6 mb-6">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          {(() => {
+                            // Use user profile data if available, otherwise calculate from reviews
+                            const totalReviewsCount = user?.totalReviews ?? reviews.length;
+                            const averageRatingValue = user?.averageRating ?? 
+                              (reviews.length > 0 
+                                ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length 
+                                : 0);
+                            
+                            return (
+                              <>
+                                <h3 className="font-display font-bold text-2xl mb-2">
+                                  {averageRatingValue > 0 ? averageRatingValue.toFixed(1) : '0.0'}
+                                  <span className="text-muted-foreground text-lg ml-1">/ 5.0</span>
+                                </h3>
+                                <div className="flex items-center gap-1 mb-2">
+                                  {[1, 2, 3, 4, 5].map((star) => (
+                                    <Star
+                                      key={star}
+                                      className={`w-5 h-5 ${
+                                        star <= Math.round(averageRatingValue)
+                                          ? 'fill-yellow-400 text-yellow-400'
+                                          : 'text-muted-foreground'
+                                      }`}
+                                    />
+                                  ))}
+                                </div>
+                                <p className="text-sm text-muted-foreground">
+                                  Based on {totalReviewsCount} {totalReviewsCount === 1 ? 'review' : 'reviews'}
+                                </p>
+                              </>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Reviews List */}
+                    <div className="space-y-4">
+                      {reviews.map((review, index) => (
+                        <motion.div
+                          key={review.id}
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: index * 0.1 }}
+                          className="glass-card rounded-2xl p-6"
+                        >
+                          <div className="flex items-start justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-12 h-12 rounded-full gradient-primary flex items-center justify-center text-white font-bold">
+                                {review.seeker.name.charAt(0).toUpperCase()}
+                              </div>
+                              <div>
+                                <h4 className="font-semibold">{review.seeker.name}</h4>
+                                {review.seeker.college && (
+                                  <p className="text-sm text-muted-foreground">{review.seeker.college}</p>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              {[1, 2, 3, 4, 5].map((star) => (
+                                <Star
+                                  key={star}
+                                  className={`w-4 h-4 ${
+                                    star <= review.rating
+                                      ? 'fill-yellow-400 text-yellow-400'
+                                      : 'text-muted-foreground'
+                                  }`}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                          {review.review && (
+                            <p className="text-sm text-foreground mb-3">{review.review}</p>
+                          )}
+                          <p className="text-xs text-muted-foreground">
+                            {getTimeAgo(new Date(review.createdAt))}
+                          </p>
+                        </motion.div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </motion.div>
+            )}
           </AnimatePresence>
         </main>
       </div>
@@ -1358,6 +1558,17 @@ const ProviderDashboard = () => {
       >
         <Plus className="w-6 h-6" />
       </motion.button>
+
+      {/* Edit Material Modal */}
+      <EditMaterialModal
+        material={editingMaterial}
+        isOpen={isEditModalOpen}
+        onClose={() => {
+          setIsEditModalOpen(false);
+          setEditingMaterial(null);
+        }}
+        onSuccess={handleMaterialUpdated}
+      />
     </div>
   );
 };

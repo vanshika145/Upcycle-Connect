@@ -33,6 +33,7 @@ interface AuthContextType {
     longitude: number;
   }) => Promise<void>;
   logout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -234,6 +235,19 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     }
   };
 
+  // Refresh user data from backend
+  const refreshUser = async () => {
+    if (!firebaseUser) return;
+    
+    try {
+      const response = await authAPI.getMe();
+      setUser(response.user);
+      console.log('✅ User data refreshed:', response.user);
+    } catch (error) {
+      console.error('Error refreshing user data:', error);
+    }
+  };
+
   // Listen to Firebase auth state changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -273,6 +287,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     signIn,
     signInWithGoogle,
     logout,
+    refreshUser,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

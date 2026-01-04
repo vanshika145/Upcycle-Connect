@@ -15,6 +15,8 @@ export interface User {
     type: 'Point';
     coordinates: [number, number]; // [longitude, latitude]
   };
+  averageRating?: number;
+  totalReviews?: number;
   createdAt: string;
 }
 
@@ -294,6 +296,47 @@ export const materialAPI = {
       method: 'PATCH',
       body: JSON.stringify({ status }),
     }, true);
+  },
+
+  // Update material
+  update: async (id: string, data: Partial<CreateMaterialData>): Promise<{ message: string; material: Material }> => {
+    const token = await getFreshToken();
+    if (!token) {
+      throw new Error('Authentication required. Please log in again.');
+    }
+
+    // Create FormData for multipart/form-data (if images are included)
+    const formData = new FormData();
+    if (data.title) formData.append('title', data.title);
+    if (data.category) formData.append('category', data.category);
+    if (data.description !== undefined) formData.append('description', data.description || '');
+    if (data.quantity) formData.append('quantity', data.quantity);
+    if (data.price !== undefined) formData.append('price', data.price.toString());
+    if (data.priceUnit) formData.append('priceUnit', data.priceUnit);
+    if (data.latitude !== undefined) formData.append('latitude', data.latitude.toString());
+    if (data.longitude !== undefined) formData.append('longitude', data.longitude.toString());
+
+    // Append image files if provided
+    if (data.images && data.images.length > 0) {
+      data.images.forEach((file) => {
+        formData.append('images', file);
+      });
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/materials/${id}`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'An error occurred' }));
+      throw new Error(error.message || `HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
   },
 
   // Delete material

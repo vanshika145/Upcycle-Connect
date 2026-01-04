@@ -397,7 +397,7 @@ const getNearbyMaterials = async (req, res) => {
 
     // Execute geospatial query
     const materials = await Material.find(query)
-      .populate('providerId', 'name email organization location')
+      .populate('providerId', 'name email organization location averageRating totalReviews')
       .sort({ createdAt: -1 })
       .limit(100); // Limit results to prevent excessive data
 
@@ -430,6 +430,8 @@ const getNearbyMaterials = async (req, res) => {
           email: material.providerId.email,
           organization: material.providerId.organization,
           location: material.providerId.location,
+          averageRating: material.providerId.averageRating || 0,
+          totalReviews: material.providerId.totalReviews || 0,
         },
         location: material.location,
         distance: Math.round(distance * 10) / 10, // Round to 1 decimal place
@@ -575,6 +577,167 @@ const updateMaterialStatus = async (req, res) => {
 };
 
 // Delete a material
+// Update material details
+const updateMaterial = async (req, res) => {
+  let uploadedImagePublicIds = []; // Track newly uploaded images for cleanup on error
+
+  try {
+    const { id } = req.params;
+    const { title, category, description, quantity, price, priceUnit, latitude, longitude } = req.body;
+
+    // Get user from MongoDB
+    const user = await User.findOne({ email: req.user.email });
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Find material and verify ownership
+    const material = await Material.findOne({ _id: id, providerId: user._id })
+      .populate('providerId', 'name email organization averageRating totalReviews');
+
+    if (!material) {
+      return res.status(404).json({ message: 'Material not found or unauthorized' });
+    }
+
+    // Compliance check: Validate material name against restricted materials list
+    if (title && isRestrictedMaterial(title)) {
+      console.error(`🚫 Compliance violation: Attempted to update to restricted material: "${title}"`);
+      return res.status(403).json({
+        error: 'This material violates safety and compliance guidelines.',
+        message: 'The material you are trying to update is restricted due to safety regulations.',
+      });
+    }
+
+    // Validate price if provided
+    if (price !== undefined) {
+      const materialPrice = parseFloat(price);
+      if (isNaN(materialPrice) || materialPrice < 0) {
+        return res.status(400).json({ message: 'Invalid price. Price must be a positive number.' });
+      }
+      material.price = materialPrice;
+    }
+
+    // Validate and update location if provided
+    if (latitude !== undefined && longitude !== undefined) {
+      const lat = parseFloat(latitude);
+      const lng = parseFloat(longitude);
+      
+      if (isNaN(lat) || isNaN(lng)) {
+        return res.status(400).json({ message: 'Invalid latitude or longitude: must be valid numbers' });
+      }
+      
+      if (lat === 0 && lng === 0) {
+        return res.status(400).json({ message: 'Invalid coordinates: (0,0) is not a valid location' });
+      }
+      
+      if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        return res.status(400).json({ message: 'Invalid coordinate ranges' });
+      }
+
+      material.location = {
+        type: 'Point',
+        coordinates: [lng, lat], // MongoDB GeoJSON: [longitude, latitude]
+      };
+    }
+
+    // Update fields if provided
+    if (title) material.title = title.trim();
+    if (category) material.category = category;
+    if (description !== undefined) material.description = description ? description.trim() : '';
+    if (quantity) material.quantity = quantity.trim();
+    if (priceUnit) material.priceUnit = priceUnit;
+
+    // Handle image uploads if new images are provided
+    if (req.files && req.files.length > 0) {
+      try {
+        // Upload new images
+        const uploadResults = await uploadMultipleImages(req.files);
+        uploadedImagePublicIds = uploadResults.map((result) => result.publicId);
+
+        // Add new images to existing images (or replace if needed)
+        const newImages = uploadResults.map((result) => ({
+          url: result.secureUrl,
+          publicId: result.publicId,
+        }));
+
+        // Keep existing images and add new ones (max 5 total)
+        const existingImages = material.images || [];
+        const allImages = [...existingImages, ...newImages].slice(0, 5); // Limit to 5 images
+        material.images = allImages;
+      } catch (uploadError) {
+        console.error('Error uploading images:', uploadError);
+        return res.status(500).json({ message: 'Failed to upload images' });
+      }
+    }
+
+    // Save updated material
+    await material.save();
+
+    // Populate provider for response
+    await material.populate('providerId', 'name email organization averageRating totalReviews');
+
+    // Format response
+    const updatedMaterial = {
+      id: material._id.toString(),
+      title: material.title,
+      category: material.category,
+      description: material.description,
+      quantity: material.quantity,
+      price: material.price,
+      priceUnit: material.priceUnit,
+      images: material.images,
+      providerId: material.providerId._id.toString(),
+      provider: {
+        name: material.providerId.name,
+        email: material.providerId.email,
+        organization: material.providerId.organization,
+        averageRating: material.providerId.averageRating || 0,
+        totalReviews: material.providerId.totalReviews || 0,
+      },
+      location: material.location,
+      status: material.status,
+      createdAt: material.createdAt,
+    };
+
+    // Emit Socket.IO event for real-time update
+    try {
+      const socketIO = req.app.get('socketIO');
+      if (socketIO && socketIO.io) {
+        socketIO.io.emit('materialUpdated', updatedMaterial);
+        console.log(`📤 Emitted materialUpdated event for material: ${material._id}`);
+      }
+    } catch (socketError) {
+      console.error('⚠️ Failed to emit materialUpdated event:', socketError);
+      // Don't fail the request if Socket.IO fails
+    }
+
+    console.log(`✅ Material updated: ${material.title}`);
+
+    res.json({
+      message: 'Material updated successfully',
+      material: updatedMaterial,
+    });
+  } catch (error) {
+    console.error('Update material error:', error);
+    
+    // Clean up uploaded images if update failed
+    if (uploadedImagePublicIds.length > 0) {
+      try {
+        await deleteMultipleImages(uploadedImagePublicIds);
+      } catch (cleanupError) {
+        console.error('Error cleaning up images:', cleanupError);
+      }
+    }
+    
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({ message: error.message });
+    }
+    
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
 const deleteMaterial = async (req, res) => {
   try {
     const { id } = req.params;
@@ -592,6 +755,8 @@ const deleteMaterial = async (req, res) => {
     if (!material) {
       return res.status(404).json({ message: 'Material not found or unauthorized' });
     }
+
+    const materialId = material._id.toString();
 
     // Extract publicIds from material images
     const publicIds = material.images
@@ -613,6 +778,18 @@ const deleteMaterial = async (req, res) => {
       }
     }
 
+    // Emit Socket.IO event for real-time deletion
+    try {
+      const socketIO = req.app.get('socketIO');
+      if (socketIO && socketIO.io) {
+        socketIO.io.emit('materialDeleted', { materialId });
+        console.log(`📤 Emitted materialDeleted event for material: ${materialId}`);
+      }
+    } catch (socketError) {
+      console.error('⚠️ Failed to emit materialDeleted event:', socketError);
+      // Don't fail the request if Socket.IO fails
+    }
+
     console.log(`✅ Material deleted: ${material.title}`);
 
     res.json({ message: 'Material deleted successfully' });
@@ -629,6 +806,7 @@ module.exports = {
   getNearbyMaterials,
   getMaterialById,
   updateMaterialStatus,
+  updateMaterial,
   deleteMaterial,
 };
 
