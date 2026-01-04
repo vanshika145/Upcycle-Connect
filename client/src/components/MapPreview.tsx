@@ -41,48 +41,20 @@ export const MapPreview = () => {
           transition={{ duration: 0.6 }}
           className="relative max-w-5xl mx-auto"
         >
-          {/* Map Background */}
+          {/* Map Background with actual map image */}
           <div className="relative aspect-[16/10] rounded-3xl overflow-hidden border border-border shadow-xl">
-            {/* Gradient Overlay */}
-            <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-secondary/5" />
-            
-            {/* Grid Pattern */}
-            <div 
-              className="absolute inset-0 opacity-30"
-              style={{
-                backgroundImage: `
-                  linear-gradient(to right, hsl(var(--border)) 1px, transparent 1px),
-                  linear-gradient(to bottom, hsl(var(--border)) 1px, transparent 1px)
-                `,
-                backgroundSize: '40px 40px'
-              }}
+            {/* Map Image */}
+            <img 
+              src="/map.png" 
+              alt="Materials map showing nearby resources"
+              className="absolute inset-0 w-full h-full object-cover"
             />
-
-            {/* Abstract Map Elements */}
-            <svg className="absolute inset-0 w-full h-full" preserveAspectRatio="none">
-              {/* Roads/Paths */}
-              <path
-                d="M 0 60% Q 30% 50%, 50% 55% T 100% 40%"
-                fill="none"
-                stroke="hsl(var(--border))"
-                strokeWidth="3"
-                opacity="0.5"
-              />
-              <path
-                d="M 20% 0 Q 25% 40%, 40% 70% T 60% 100%"
-                fill="none"
-                stroke="hsl(var(--border))"
-                strokeWidth="3"
-                opacity="0.5"
-              />
-              <path
-                d="M 80% 0 Q 70% 30%, 75% 60% T 90% 100%"
-                fill="none"
-                stroke="hsl(var(--border))"
-                strokeWidth="3"
-                opacity="0.5"
-              />
-            </svg>
+            
+            {/* Gradient Overlay for better visibility */}
+            <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-secondary/10" />
+            
+            {/* Subtle overlay for better contrast */}
+            <div className="absolute inset-0 bg-background/5" />
 
             {/* Location Pins */}
             {mapPins.map((pin, index) => (

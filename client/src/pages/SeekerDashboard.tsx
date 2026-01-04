@@ -1041,20 +1041,35 @@ const SeekerDashboard = () => {
                       <div className="glass-card rounded-2xl p-6">
                         <h3 className="font-semibold text-lg mb-4">Waste Distribution by Category</h3>
                         <div className="space-y-3">
-                          {impactData.categoryDistribution.map((cat: any, index: number) => (
-                            <div key={cat.category}>
-                              <div className="flex justify-between mb-1">
-                                <span className="text-sm font-medium">{cat.category}</span>
-                                <span className="text-sm text-muted-foreground">{cat.percentage.toFixed(1)}%</span>
+                          {impactData.categoryDistribution.map((cat: any, index: number) => {
+                            const colors = [
+                              'linear-gradient(90deg, #10b981 0%, #06b6d4 100%)', // Emerald to Cyan
+                              'linear-gradient(90deg, #3b82f6 0%, #8b5cf6 100%)', // Blue to Purple
+                              'linear-gradient(90deg, #f59e0b 0%, #ef4444 100%)', // Amber to Red
+                              'linear-gradient(90deg, #ec4899 0%, #14b8a6 100%)', // Pink to Teal
+                              'linear-gradient(90deg, #06b6d4 0%, #3b82f6 100%)', // Cyan to Blue
+                              'linear-gradient(90deg, #8b5cf6 0%, #ec4899 100%)', // Purple to Pink
+                              'linear-gradient(90deg, #10b981 0%, #14b8a6 100%)', // Emerald to Teal
+                            ];
+                            const gradient = colors[index % colors.length];
+                            return (
+                              <div key={cat.category}>
+                                <div className="flex justify-between mb-1">
+                                  <span className="text-sm font-medium">{cat.category}</span>
+                                  <span className="text-sm text-muted-foreground">{cat.percentage.toFixed(1)}%</span>
+                                </div>
+                                <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                                  <div
+                                    className="h-2 rounded-full transition-all duration-500"
+                                    style={{ 
+                                      width: `${cat.percentage}%`,
+                                      background: gradient
+                                    }}
+                                  />
+                                </div>
                               </div>
-                              <div className="w-full bg-muted rounded-full h-2">
-                                <div
-                                  className="bg-primary h-2 rounded-full transition-all duration-500"
-                                  style={{ width: `${cat.percentage}%` }}
-                                />
-                              </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     )}
@@ -1076,8 +1091,18 @@ const SeekerDashboard = () => {
                           {(() => {
                             // Calculate total for percentage calculation
                             const total = categoryBreakdown.reduce((sum, cat) => sum + cat.total, 0);
-                            return categoryBreakdown.map((cat) => {
+                            const colors = [
+                              'linear-gradient(90deg, #10b981 0%, #06b6d4 100%)', // Emerald to Cyan
+                              'linear-gradient(90deg, #3b82f6 0%, #8b5cf6 100%)', // Blue to Purple
+                              'linear-gradient(90deg, #f59e0b 0%, #ef4444 100%)', // Amber to Red
+                              'linear-gradient(90deg, #ec4899 0%, #14b8a6 100%)', // Pink to Teal
+                              'linear-gradient(90deg, #06b6d4 0%, #3b82f6 100%)', // Cyan to Blue
+                              'linear-gradient(90deg, #8b5cf6 0%, #ec4899 100%)', // Purple to Pink
+                              'linear-gradient(90deg, #10b981 0%, #14b8a6 100%)', // Emerald to Teal
+                            ];
+                            return categoryBreakdown.map((cat, index) => {
                               const percentage = total > 0 ? (cat.total / total) * 100 : 0;
+                              const gradient = colors[index % colors.length];
                               return (
                                 <div key={cat.category}>
                                   <div className="flex justify-between text-sm mb-1">
@@ -1091,7 +1116,8 @@ const SeekerDashboard = () => {
                                       initial={{ width: 0 }}
                                       animate={{ width: `${percentage}%` }}
                                       transition={{ duration: 1, delay: 0.2 }}
-                                      className="h-full gradient-primary rounded-full"
+                                      className="h-full rounded-full"
+                                      style={{ background: gradient }}
                                     />
                                   </div>
                                 </div>
@@ -1120,15 +1146,17 @@ const SeekerDashboard = () => {
                                     label: 'Waste Reused (kg)',
                                     data: categoryBreakdown.map((cat) => cat.total),
                                     backgroundColor: [
-                                      'hsl(var(--eco-green))',
-                                      'hsl(var(--eco-teal))',
-                                      'hsl(var(--eco-blue))',
-                                      'hsl(var(--accent))',
-                                      'hsl(var(--primary))',
-                                      'hsl(var(--secondary))',
-                                      'hsl(var(--muted))',
+                                      '#10b981', // Emerald green
+                                      '#06b6d4', // Cyan
+                                      '#3b82f6', // Blue
+                                      '#8b5cf6', // Purple
+                                      '#f59e0b', // Amber
+                                      '#ef4444', // Red
+                                      '#ec4899', // Pink
+                                      '#14b8a6', // Teal
                                     ],
-                                    borderWidth: 0,
+                                    borderWidth: 3,
+                                    borderColor: '#ffffff',
                                   },
                                 ],
                               }}
@@ -1141,9 +1169,20 @@ const SeekerDashboard = () => {
                                     labels: {
                                       padding: 15,
                                       usePointStyle: true,
+                                      font: {
+                                        size: 12,
+                                      },
+                                      color: 'hsl(var(--foreground))',
                                     },
                                   },
                                   tooltip: {
+                                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                                    titleColor: '#ffffff',
+                                    bodyColor: '#ffffff',
+                                    borderColor: 'rgba(255, 255, 255, 0.2)',
+                                    borderWidth: 1,
+                                    padding: 12,
+                                    displayColors: true,
                                     callbacks: {
                                       label: (context) => {
                                         const label = context.label || '';
@@ -1182,8 +1221,20 @@ const SeekerDashboard = () => {
                                 {
                                   label: 'CO₂ Saved (kg)',
                                   data: co2Monthly.map((item) => item.co2),
-                                  backgroundColor: 'hsl(var(--eco-teal))',
+                                  backgroundColor: co2Monthly.map((_, index) => {
+                                    // Create a gradient-like effect with vibrant colors
+                                    const colors = [
+                                      'rgba(16, 185, 129, 0.8)', // Emerald
+                                      'rgba(6, 182, 212, 0.8)',  // Cyan
+                                      'rgba(59, 130, 246, 0.8)', // Blue
+                                      'rgba(139, 92, 246, 0.8)', // Purple
+                                      'rgba(245, 158, 11, 0.8)', // Amber
+                                      'rgba(236, 72, 153, 0.8)', // Pink
+                                    ];
+                                    return colors[index % colors.length];
+                                  }),
                                   borderRadius: 8,
+                                  borderSkipped: false,
                                 },
                               ],
                             }}
@@ -1195,9 +1246,22 @@ const SeekerDashboard = () => {
                                   display: false,
                                 },
                                 tooltip: {
+                                  backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                                  titleColor: '#ffffff',
+                                  bodyColor: '#ffffff',
+                                  borderColor: 'rgba(6, 182, 212, 0.5)',
+                                  borderWidth: 2,
+                                  padding: 12,
+                                  displayColors: true,
                                   callbacks: {
                                     label: (context) => {
                                       return `CO₂ Saved: ${context.parsed.y.toFixed(2)} kg`;
+                                    },
+                                    labelColor: (context) => {
+                                      return {
+                                        borderColor: context.dataset.backgroundColor[context.dataIndex] || '#06b6d4',
+                                        backgroundColor: context.dataset.backgroundColor[context.dataIndex] || '#06b6d4',
+                                      };
                                     },
                                   },
                                 },
@@ -1207,6 +1271,18 @@ const SeekerDashboard = () => {
                                   beginAtZero: true,
                                   ticks: {
                                     callback: (value) => `${value} kg`,
+                                    color: 'hsl(var(--muted-foreground))',
+                                  },
+                                  grid: {
+                                    color: 'hsl(var(--border))',
+                                  },
+                                },
+                                x: {
+                                  ticks: {
+                                    color: 'hsl(var(--muted-foreground))',
+                                  },
+                                  grid: {
+                                    color: 'hsl(var(--border))',
                                   },
                                 },
                               },
@@ -1231,7 +1307,9 @@ const SeekerDashboard = () => {
       <motion.button
         whileHover={{ scale: 1.1 }}
         whileTap={{ scale: 0.9 }}
-        className="fixed bottom-8 right-8 w-14 h-14 rounded-full gradient-primary shadow-glow-lg flex items-center justify-center text-white"
+        onClick={() => setActiveTab("requests")}
+        className="fixed bottom-8 right-8 w-14 h-14 rounded-full gradient-primary shadow-glow-lg flex items-center justify-center text-white z-50"
+        aria-label="View requests"
       >
         <ClipboardList className="w-6 h-6" />
       </motion.button>

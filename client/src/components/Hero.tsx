@@ -12,7 +12,18 @@ const floatingIcons = [
 
 export const Hero = () => {
   return (
-    <section className="relative min-h-screen hero-gradient overflow-hidden pt-24">
+    <section className="relative min-h-screen overflow-hidden pt-24">
+      {/* Background Image */}
+      <div 
+        className="absolute inset-0 bg-cover bg-center bg-no-repeat"
+        style={{
+          backgroundImage: 'url(/backgroung.jpeg)',
+        }}
+      />
+      
+      {/* Dark Overlay for better text readability */}
+      <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" />
+      
       {/* Floating Background Icons */}
       {floatingIcons.map(({ Icon, delay, x, y }, index) => (
         <motion.div
@@ -20,7 +31,7 @@ export const Hero = () => {
           initial={{ opacity: 0, scale: 0 }}
           animate={{ opacity: 0.1, scale: 1 }}
           transition={{ delay, duration: 0.8 }}
-          className="absolute float-animation"
+          className="absolute float-animation z-10"
           style={{ left: x, top: y, animationDelay: `${delay}s` }}
         >
           <Icon className="w-24 h-24 text-primary" />
@@ -29,7 +40,7 @@ export const Hero = () => {
 
       {/* Grid Pattern Overlay */}
       <div 
-        className="absolute inset-0 opacity-[0.03]"
+        className="absolute inset-0 opacity-[0.03] z-10"
         style={{
           backgroundImage: `
             linear-gradient(to right, hsl(var(--foreground)) 1px, transparent 1px),
@@ -39,7 +50,7 @@ export const Hero = () => {
         }}
       />
 
-      <div className="container mx-auto px-4 py-20 relative z-10">
+      <div className="container mx-auto px-4 py-20 relative z-20">
         <div className="max-w-4xl mx-auto text-center">
           {/* Badge */}
           <motion.div

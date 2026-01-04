@@ -1385,8 +1385,22 @@ const ProviderDashboard = () => {
                             {
                               label: 'Materials Reused',
                               data: providerMonthly.map((item) => item.materialsCount),
-                              backgroundColor: 'hsl(var(--primary))',
+                              backgroundColor: providerMonthly.map((_, index) => {
+                                // Create a gradient-like effect with vibrant colors
+                                const colors = [
+                                  'rgba(16, 185, 129, 0.8)', // Emerald
+                                  'rgba(6, 182, 212, 0.8)',  // Cyan
+                                  'rgba(59, 130, 246, 0.8)', // Blue
+                                  'rgba(139, 92, 246, 0.8)', // Purple
+                                  'rgba(245, 158, 11, 0.8)', // Amber
+                                  'rgba(236, 72, 153, 0.8)', // Pink
+                                  'rgba(14, 165, 233, 0.8)', // Sky
+                                  'rgba(34, 197, 94, 0.8)',  // Green
+                                ];
+                                return colors[index % colors.length];
+                              }),
                               borderRadius: 8,
+                              borderSkipped: false,
                             },
                           ],
                         }}
@@ -1398,6 +1412,13 @@ const ProviderDashboard = () => {
                               display: false,
                             },
                             tooltip: {
+                              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                              titleColor: '#ffffff',
+                              bodyColor: '#ffffff',
+                              borderColor: 'rgba(16, 185, 129, 0.5)',
+                              borderWidth: 2,
+                              padding: 12,
+                              displayColors: true,
                               callbacks: {
                                 label: (context) => {
                                   const item = providerMonthly[context.dataIndex];
@@ -1405,6 +1426,12 @@ const ProviderDashboard = () => {
                                     `Materials: ${item.materialsCount}`,
                                     `Quantity: ${item.totalQuantity.toFixed(1)} kg`,
                                   ];
+                                },
+                                labelColor: (context) => {
+                                  return {
+                                    borderColor: context.dataset.backgroundColor[context.dataIndex] || '#10b981',
+                                    backgroundColor: context.dataset.backgroundColor[context.dataIndex] || '#10b981',
+                                  };
                                 },
                               },
                             },
@@ -1415,6 +1442,18 @@ const ProviderDashboard = () => {
                               ticks: {
                                 stepSize: 1,
                                 callback: (value) => `${value} materials`,
+                                color: 'hsl(var(--muted-foreground))',
+                              },
+                              grid: {
+                                color: 'hsl(var(--border))',
+                              },
+                            },
+                            x: {
+                              ticks: {
+                                color: 'hsl(var(--muted-foreground))',
+                              },
+                              grid: {
+                                color: 'hsl(var(--border))',
                               },
                             },
                           },
